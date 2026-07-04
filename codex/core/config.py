@@ -5,10 +5,10 @@ import toml
 from pathlib import Path
 from typing import Optional
 
-from .models import AppConfig, ModelConfig, ProjectConfig, PRESET_MODELS
+from .models import AppConfig, ModelConfig, ProjectConfig
 
 
-CONFIG_DIR = Path.home() / ".config" / "codex"
+CONFIG_DIR = Path.home() / ".config" / "hakimi"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 
 
@@ -22,10 +22,7 @@ def load_config() -> AppConfig:
     ensure_config_dir()
     
     if not CONFIG_FILE.exists():
-        # 创建默认配置
         config = AppConfig()
-        # 添加预设模型（不带API key）
-        config.models = [m.model_copy(update={"api_key": None}) for m in PRESET_MODELS]
         save_config(config)
         return config
     
@@ -33,8 +30,7 @@ def load_config() -> AppConfig:
         data = toml.load(CONFIG_FILE)
         return AppConfig(**data)
     except Exception:
-        # 如果解析失败，返回默认配置
-        return AppConfig(models=[m.model_copy(update={"api_key": None}) for m in PRESET_MODELS])
+        return AppConfig()
 
 
 def save_config(config: AppConfig) -> None:

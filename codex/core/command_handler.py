@@ -205,13 +205,87 @@ class CommandHandler:
         elif subcmd == "select":
             return CommandResult(True, f"选择模型: {subargs}", action="model_select", data={"id": subargs})
         elif subcmd == "add":
-            return CommandResult(True, "", action="model_add")
-        elif subcmd == "edit":
-            return CommandResult(True, f"编辑模型: {subargs}", action="model_edit", data={"id": subargs})
+            # 解析模型参数
+            # 格式1: /model add <model_id> <api_key> [provider]
+            # 格式2: /model add name=xxx model_id=xxx api_key=xxx provider=xxx
+            return self._parse_model_add(subargs)
         elif subcmd == "delete":
             return CommandResult(True, f"删除模型: {subargs}", action="model_delete", data={"id": subargs})
         else:
-            return CommandResult(False, f"未知子命令: {subcmd}\n可用: list, select, add, edit, delete")
+            return CommandResult(False, f"未知子命令: {subcmd}\n可用: list, select, add, delete")
+    
+    def _parse_model_add(self, args: str) -> CommandResult:
+        """解析模型添加参数."""
+        if not args:
+            return CommandResult(False, 
+                "用法: /model add <model_id> <api_key> [provider]\n"
+                "或: /model add name=xxx model_id=xxx api_key=xxx provider=xxx\n\n"
+                "提供商: openai, anthropic, deepseek, google, mistral, ollama, openrouter, custom\n"
+                "示例: /model add deepseek-v3 sk-xxx deepseek\n"
+                "       /model add gpt-4o sk-xxx openai\n"
+                "       /model add name=\"DeepSeek\" model_id=deepseek-v3 api_key=sk-xxx provider=deepseek")
+        
+        # 检查是否是键值对格式
+        if "=" in args:
+            # 键值对格式: name=xxx model_id=xxx api_key=xxx provider=xxx
+            params = {}
+            # 匹配 key=value 或 key="value with spaces"
+            pattern = r'(\w+)=("(?:[^"\\]|\\.)*"|\S+)'
+            for match in re.finditer(pattern, args):
+                key = match.group(1)
+                value = match.group(2)
+                # 去除引号
+                if value.startswith('"') and value.endswith('"'):
+                    value = value[1:-1]
+                params[key] = value
+            
+            if "model_id" not in params or "api_key" not in params:
+                return CommandResult(False, "必须提供 model_id 和 api_key")
+            
+            return CommandResult(
+                True, "",
+                action="model_add",
+                data=params
+            )
+        
+        # 简写格式: /model add <model_id> <api_key> [provider]
+        tokens = args.split()
+        if len(tokens) < 2:
+            return CommandResult(False, 
+                "用法: /model add <model_id> <api_key> [provider]\n"
+                "示例: /model add deepseek-v3 sk-xxx deepseek")
+        
+        model_id = tokens[0]
+        api_key = tokens[1]
+        provider = tokens[2] if len(tokens) > 2 else self._infer_provider(model_id)
+        
+        return CommandResult(
+            True, "",
+            action="model_add",
+            data={
+                "model_id": model_id,
+                "api_key": api_key,
+                "provider": provider,
+            }
+        )
+    
+    def _infer_provider(self, model_id: str) -> str:
+        """从模型ID推断提供商."""
+        model_id_lower = model_id.lower()
+        if "deepseek" in model_id_lower:
+            return "deepseek"
+        elif "gpt" in model_id_lower or "o1" in model_id_lower or "o3" in model_id_lower:
+            return "openai"
+        elif "claude" in model_id_lower:
+            return "anthropic"
+        elif "gemini" in model_id_lower:
+            return "google"
+        elif "mistral" in model_id_lower:
+            return "mistral"
+        elif "llama" in model_id_lower or "qwen" in model_id_lower:
+            return "ollama"
+        else:
+            return "custom"
     
     def get_completions(self, partial: str) -> List[str]:
         """获取命令补全列表."""

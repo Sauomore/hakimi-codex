@@ -20,8 +20,6 @@ from ..core import git_utils
 from ..core.tools import ToolExecutor, ToolResultStatus
 from ..core.settings_manager import Settings, load_settings, save_settings
 from ..core.command_handler import CommandHandler, CommandResult
-from .model_edit_dialog import ModelEditDialog
-
 
 class MainScreen(Screen):
     """Claude Code 风格主界面."""
@@ -423,7 +421,6 @@ class MainScreen(Screen):
             "model_list": self._show_models,
             "model_select": self._select_model,
             "model_add": self._on_model_add,
-            "model_edit": self._on_model_edit,
             "model_delete": self._on_model_delete,
             "add_file": self._add_file_to_context,
             "show_diff": self._show_diff,
@@ -510,29 +507,66 @@ class MainScreen(Screen):
         else:
             self._add_system_message(f"Model not found: {model_id}")
     
-    def _on_model_add(self):
-        """添加模型."""
-        self.push_screen(ModelEditDialog(), self._on_model_saved)
-    
-    def _on_model_edit(self, data: Dict):
-        """编辑模型."""
-        model_id = data.get("id")
-        for model in self.app_config.models:
-            if model.id == model_id:
-                self.push_screen(ModelEditDialog(model=model), self._on_model_saved)
-                return
+    def _on_model_add(self, data: Dict):
+        """添加模型 - 从命令参数直接创建."""
+        model_id = data.get("model_id")
+        api_key = data.get("api_key")
+        provider_str = data.get("provider", "custom")
+        name = data.get("name", model_id)
+        
+        if not model_id or not api_key:
+            self._add_system_message("Error: model_id and api_key are required")
+            return
+        
+        # 推断 provider
+        try:
+            from ..core.models import ProviderType
+            provider = ProviderType(provider_str.lower())
+        except ValueError:
+            provider = ProviderType.CUSTOM
+        
+        # 设置默认 API base
+        api_base = None
+        if provider == ProviderType.DEEPSEEK:
+            api_base = "https://api.deepseek.com/v1"
+        elif provider == ProviderType.OPENAI:
+            api_base = None  # 使用默认
+        elif provider == ProviderType.ANTHROPIC:
+            api_base = "https://api.anthropic.com/v1"
+        elif provider == ProviderType.GOOGLE:
+            api_base = "https://generativelanguage.googleapis.com/v1beta"
+        elif provider == ProviderType.MISTRAL:
+            api_base = "https://api.mistral.ai/v1"
+        elif provider == ProviderType.OLLAMA:
+            api_base = "http://localhost:11434/v1"
+        elif provider == ProviderType.OPENROUTER:
+            api_base = "https://openrouter.ai/api/v1"
+        
+        # 创建模型配置
+        from ..core.models import ModelConfig
+        model = ModelConfig(
+            id=model_id,
+            name=name,
+            provider=provider,
+            model_id=model_id,
+            api_key=api_key,
+            api_base=api_base,
+            temperature=0.7,
+            max_tokens=4096,
+            context_window=8192,
+            enabled=True,
+            is_default=False,
+        )
+        
+        add_model(self.app_config, model)
+        self._add_system_message(f"Model added: {name} ({provider.value})")
+        self._add_system_message(f"Use /model select {model_id} to activate")
     
     def _on_model_delete(self, data: Dict):
         """删除模型."""
         model_id = data.get("id")
         if remove_model(self.app_config, model_id):
             self._add_system_message(f"Model removed: {model_id}")
-    
-    def _on_model_saved(self, result: Optional[ModelConfig]):
-        """模型保存."""
-        if result:
-            add_model(self.app_config, result)
-            self._add_system_message(f"Model saved: {result.name}")
     
     def _add_file_to_context(self, data: Dict):
         """添加文件."""
