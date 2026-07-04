@@ -47,7 +47,7 @@ class CodeViewerWidget(Vertical):
     
     def compose(self):
         """组装组件."""
-        yield Static("📄 代码查看", classes="code-header")
+        yield Static("[文件] 代码查看", classes="code-header")
         yield Static("选择文件以查看内容...", classes="code-content", id="code_display")
     
     def watch_current_file(self, file_path: Optional[str]):
@@ -80,7 +80,7 @@ class CodeViewerWidget(Vertical):
         
         # 更新标题
         header = self.query_one(".code-header", Static)
-        header.update(f"📄 {path.name}")
+        header.update(f"[文件] {path.name}")
         
         if language:
             try:

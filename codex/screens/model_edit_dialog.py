@@ -53,7 +53,7 @@ class ModelEditDialog(ModalScreen[ModelConfig]):
     
     def compose(self) -> ComposeResult:
         with Container():
-            title = "✏️ 编辑模型" if self.is_edit else "➕ 添加模型"
+            title = "[*] 编辑模型" if self.is_edit else "[+] 添加模型"
             yield Static(title, classes="title")
             
             yield Input(
@@ -109,8 +109,8 @@ class ModelEditDialog(ModalScreen[ModelConfig]):
             )
             
             with Horizontal():
-                yield Button("💾 保存", id="btn_save", variant="success")
-                yield Button("❌ 取消", id="btn_cancel", variant="default")
+                yield Button("[保存]", id="btn_save", variant="success")
+                yield Button("[取消]", id="btn_cancel", variant="default")
     
     def on_button_pressed(self, event: Button.Pressed):
         """按钮点击事件."""

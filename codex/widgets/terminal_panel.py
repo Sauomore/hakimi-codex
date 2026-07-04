@@ -81,7 +81,7 @@ class TerminalPanel(Vertical):
     
     def compose(self) -> ComposeResult:
         """组装组件."""
-        yield Static("💻 终端", classes="terminal-header")
+        yield Static("[终端]", classes="terminal-header")
         
         log = RichLog(id="terminal_log", wrap=True, markup=False, highlight=False)
         log.auto_scroll = True
@@ -116,7 +116,7 @@ class TerminalPanel(Vertical):
         log.write("║    npm/yarn  - 包管理命令                              ║")
         log.write("║    任何 shell 命令...                                  ║")
         log.write("╚════════════════════════════════════════════════════════╝")
-        log.write(f"\n📂 工作目录: {self.project_path}")
+        log.write(f"\n[目录] 工作目录: {self.project_path}")
         log.write("")
     
     def execute_command(self, command: str) -> None:

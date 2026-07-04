@@ -39,6 +39,8 @@ class AISettings:
     context_window: int = 8192
     auto_analyze: bool = True  # 启动时自动分析项目
     show_tool_results: bool = True  # 显示工具执行结果
+    tool_results_fold: bool = True  # 工具结果默认折叠
+    markdown_render: bool = True  # AI 消息 Markdown 渲染
 
 
 @dataclass

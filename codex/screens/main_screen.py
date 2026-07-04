@@ -8,18 +8,21 @@ from typing import Optional, Dict, Any, List
 
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.containers import Vertical, Horizontal, ScrollableContainer
+from textual.containers import Vertical, Horizontal
 from textual.widgets import Static, Input, RichLog
 from textual.reactive import reactive
 from textual.worker import Worker, get_current_worker
 
-from ..core.models import ModelConfig
+from rich.markdown import Markdown
+
+from ..core.models import ModelConfig, ProviderType
 from ..core.config import AppConfig, get_active_model, add_model, remove_model, load_config, set_active_model
 from ..core.llm_client import LLMClient
 from ..core import git_utils
 from ..core.tools import ToolExecutor, ToolResultStatus
 from ..core.settings_manager import Settings, load_settings, save_settings
 from ..core.command_handler import CommandHandler, CommandResult
+
 
 class MainScreen(Screen):
     """Claude Code 风格主界面."""
@@ -29,164 +32,45 @@ class MainScreen(Screen):
         layout: vertical;
         width: 100%;
         height: 100%;
-        background: #0d1117;
+        background: #0a0a0a;
     }
     
-    /* 顶部状态栏 */
     #status_bar {
         height: 1;
-        background: #161b22;
-        color: #8b949e;
-        content-align: left middle;
+        background: #141414;
+        color: #cccccc;
         padding: 0 2;
-        text-style: none;
     }
     
-    /* 消息区域 */
-    #messages_container {
+    #messages_log {
         height: 1fr;
-        background: #0d1117;
+        background: #0a0a0a;
+        color: #f0f0f0;
         border: none;
-        scrollbar-color: #30363d;
-        scrollbar-background: #0d1117;
+        padding: 0 1;
     }
     
-    /* 输入区域 */
     #input_container {
         height: auto;
-        background: #161b22;
-        border-top: solid #30363d;
+        background: #141414;
+        border-top: solid #333333;
         padding: 0 1;
     }
     
-    #input_container Input {
+    #chat_input {
         height: auto;
         min-height: 1;
-        background: #0d1117;
-        color: #e6edf3;
+        background: #141414;
+        color: #f0f0f0;
         border: none;
         padding: 0 1;
-    }
-    
-    #input_container Input:focus {
-        border: none;
     }
     
     #input_hint {
         height: 1;
-        color: #484f58;
-        text-style: dim;
+        color: #888888;
+        background: #141414;
         padding: 0 2;
-    }
-    
-    /* 消息样式 */
-    .user-msg {
-        height: auto;
-        padding: 0 2;
-        margin: 1 0;
-        color: #58a6ff;
-    }
-    
-    .ai-msg {
-        height: auto;
-        padding: 0 2;
-        margin: 1 0;
-        color: #e6edf3;
-    }
-    
-    .system-msg {
-        height: auto;
-        padding: 0 2;
-        margin: 0;
-        color: #484f58;
-        text-style: dim;
-    }
-    
-    .tool-msg {
-        height: auto;
-        padding: 0 2;
-        margin: 0;
-        color: #8b949e;
-        background: #161b22;
-        border-left: solid #30363d;
-    }
-    
-    /* Diff 内联样式 */
-    .diff-block {
-        height: auto;
-        margin: 1 0;
-        padding: 0;
-    }
-    
-    .diff-header {
-        height: 1;
-        background: #161b22;
-        color: #e6edf3;
-        padding: 0 2;
-        text-style: bold;
-    }
-    
-    .diff-line-added {
-        height: auto;
-        color: #3fb950;
-        background: #0f2d1f;
-        padding: 0 2;
-    }
-    
-    .diff-line-removed {
-        height: auto;
-        color: #f85149;
-        background: #3d1010;
-        padding: 0 2;
-    }
-    
-    .diff-line-context {
-        height: auto;
-        color: #8b949e;
-        padding: 0 2;
-    }
-    
-    /* 代码块 */
-    .code-block {
-        height: auto;
-        margin: 1 0;
-        background: #161b22;
-        border: solid #30363d;
-    }
-    
-    .code-header {
-        height: 1;
-        background: #21262d;
-        color: #8b949e;
-        padding: 0 2;
-        text-style: bold;
-    }
-    
-    .code-content {
-        height: auto;
-        padding: 0 2;
-        color: #e6edf3;
-    }
-    
-    /* 工具调用 */
-    .tool-call {
-        height: auto;
-        margin: 1 0;
-        background: #161b22;
-        border-left: solid #58a6ff;
-    }
-    
-    .tool-call-header {
-        height: 1;
-        color: #58a6ff;
-        padding: 0 2;
-        text-style: bold;
-    }
-    
-    .tool-call-content {
-        height: auto;
-        padding: 0 2;
-        color: #8b949e;
     }
     """
     
@@ -203,55 +87,58 @@ class MainScreen(Screen):
         super().__init__(**kwargs)
     
     def compose(self) -> ComposeResult:
-        """组装 Claude Code 风格界面."""
-        # 顶部状态栏
         yield Static(
-            f"Hakimi Codex v0.2.0 | {self.project_path.name} | /help for commands",
+            f"Hakimi Codex v0.2.2 | {self.project_path.name} | /help for commands",
             id="status_bar"
         )
-        
-        # 消息区域
-        yield ScrollableContainer(id="messages_container")
-        
-        # 底部输入区域
+        yield RichLog(id="messages_log", wrap=True, markup=True, highlight=False, auto_scroll=True)
         with Vertical(id="input_container"):
             yield Input(
                 placeholder="Type a message or /command...",
                 id="chat_input"
             )
             yield Static(
-                "Ctrl+C to quit | /help for commands | /model to switch model",
+                "Ctrl+C to quit | /help for commands | /model to configure",
                 id="input_hint"
             )
     
     def on_mount(self):
-        """挂载后初始化."""
         self.app_config = load_config()
         self._update_status_bar()
         
-        # 显示欢迎信息
+        # ASCII art header
+        self._add_system_message("")
+        self._add_system_message("██╗  ██╗ █████╗ ██╗  ██╗██╗███╗   ███╗██╗")
+        self._add_system_message("██║  ██║██╔══██╗██║ ██╔╝██║████╗ ████║██║")
+        self._add_system_message("███████║███████║█████╔╝ ██║██╔████╔██║██║")
+        self._add_system_message("██╔══██║██╔══██║██╔═██╗ ██║██║╚██╔╝██║██║")
+        self._add_system_message("██║  ██║██║  ██║██║  ██╗██║██║ ╚═╝ ██║██║")
+        self._add_system_message("╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝     ╚═╝╚═╝")
+        self._add_system_message("")
+        self._add_system_message("Welcome to Hakimi Codex v0.2.2")
         self._add_system_message(f"Project: {self.project_path}")
         
-        # 自动分析项目
         if self.settings.ai.auto_analyze:
             try:
                 from ..core.project_analyzer import ProjectAnalyzer
                 analyzer = ProjectAnalyzer(str(self.project_path))
                 summary = analyzer.get_summary()
-                self._add_system_message(summary)
+                for line in summary.split("\n"):
+                    if line.strip():
+                        self._add_system_message(line)
             except Exception:
                 pass
         
         active_model = get_active_model(self.app_config)
         if active_model:
-            self._add_system_message(f"Model: {active_model.name}")
+            self._add_system_message(f"Active model: {active_model.name}")
         else:
-            self._add_system_message("No model selected. Use /model to configure.")
+            self._add_system_message("[bold yellow]No model configured.[/bold yellow] Type /model add <model_id> <api_key> [provider]")
+            self._add_system_message("Example: /model add deepseek-v3 sk-xxx deepseek")
         
-        self._add_system_message("Type /help for available commands")
+        self._add_system_message("Type /help for all commands")
     
     def _update_status_bar(self):
-        """更新状态栏."""
         status = self.query_one("#status_bar", Static)
         active_model = get_active_model(self.app_config)
         model_name = active_model.name if active_model else "none"
@@ -263,78 +150,80 @@ class MainScreen(Screen):
                 branch = f" | git:{branch}"
         
         status.update(
-            f"Hakimi Codex v0.2.0 | {self.project_path.name} | model:{model_name}{branch} | /help"
+            f"Hakimi v0.2.2 | {self.project_path.name} | model:{model_name}{branch} | /help"
         )
     
     def _add_user_message(self, content: str):
-        """添加用户消息."""
         self.messages.append({"role": "user", "content": content})
-        container = self.query_one("#messages_container", ScrollableContainer)
-        msg = Static(f"> {content}", classes="user-msg")
-        container.mount(msg)
-        self._scroll_to_bottom()
+        log = self.query_one("#messages_log", RichLog)
+        log.write("")
+        log.write(f"[bold #4da6ff]> {content}[/bold #4da6ff]")
+        log.write("")
     
     def _add_ai_message(self, content: str, thinking: Optional[str] = None):
-        """添加 AI 消息，解析并渲染 diff 和代码块."""
         self.messages.append({"role": "assistant", "content": content, "thinking": thinking})
-        container = self.query_one("#messages_container", ScrollableContainer)
+        log = self.query_one("#messages_log", RichLog)
         
-        # 解析内容，分离 diff 块和代码块
+        # 显示思考内容
+        if thinking and self.settings.ai.think_mode:
+            think_lines = thinking.strip().split("\n")
+            if self.settings.ai.think_fold:
+                preview_lines = think_lines[:self.settings.ai.think_lines]
+                preview = "\n".join(preview_lines)
+                remaining = len(think_lines) - self.settings.ai.think_lines
+                if remaining > 0:
+                    preview += f"\n... ({remaining} more lines, use /setting think_fold=false to expand)"
+                log.write(f"[#{self.settings.ui.think_color}]{preview}[/#{self.settings.ui.think_color}]")
+            else:
+                log.write(f"[#{self.settings.ui.think_color}]{thinking}[/#{self.settings.ui.think_color}]")
+            log.write("")
+        
         parts = self._parse_content(content)
-        
         for part in parts:
             if part["type"] == "text":
-                msg = Static(part["content"], classes="ai-msg")
-                container.mount(msg)
+                if self.settings.ai.markdown_render:
+                    log.write(Markdown(part["content"]))
+                else:
+                    log.write(part["content"])
             elif part["type"] == "diff":
-                self._render_diff(container, part["content"], part.get("filename"))
+                self._render_diff(log, part["content"])
             elif part["type"] == "code":
-                self._render_code_block(container, part["content"], part.get("language"))
+                self._render_code(log, part["content"], part.get("language"))
         
-        self._scroll_to_bottom()
+        log.write("")
     
     def _add_system_message(self, content: str):
-        """添加系统消息."""
-        container = self.query_one("#messages_container", ScrollableContainer)
-        msg = Static(content, classes="system-msg")
-        container.mount(msg)
-        self._scroll_to_bottom()
+        log = self.query_one("#messages_log", RichLog)
+        log.write(f"[#aaaaaa]{content}[/#aaaaaa]")
     
     def _add_tool_result(self, tool_name: str, result: str):
-        """添加工具执行结果."""
         if not self.settings.ai.show_tool_results:
             return
-        container = self.query_one("#messages_container", ScrollableContainer)
+        log = self.query_one("#messages_log", RichLog)
+        log.write("")
         
-        tool_widget = Vertical(classes="tool-call")
-        tool_widget.mount(Static(f"{tool_name}", classes="tool-call-header"))
+        line_count = result.count("\n") + 1
+        char_count = len(result)
         
-        # 截断过长的输出
-        display_result = result
-        if len(result) > 2000:
-            display_result = result[:2000] + "\n\n... (output truncated)"
-        
-        tool_widget.mount(Static(display_result, classes="tool-call-content"))
-        container.mount(tool_widget)
-        self._scroll_to_bottom()
+        if self.settings.ai.tool_results_fold:
+            # 折叠模式：只显示一行摘要
+            log.write(f"[bold #58a6ff][{tool_name}][/bold #58a6ff] [#888888]({line_count} lines, {char_count} chars) [use /setting tool_results_fold=false to expand][/#888888]")
+        else:
+            # 展开模式：显示完整内容
+            log.write(f"[bold #58a6ff][{tool_name}][/bold #58a6ff]")
+            display = result[:2000] + "\n... (output truncated)" if len(result) > 2000 else result
+            for line in display.split("\n"):
+                log.write(f"[#888888]{line}[/#888888]")
+        log.write("")
     
     def _parse_content(self, content: str) -> List[Dict[str, Any]]:
-        """解析内容，分离 diff 和代码块."""
         parts = []
-        
-        # 匹配 diff 块
-        diff_pattern = r'```diff\n(.*?)```'
-        code_pattern = r'```(\w+)?\n(.*?)```'
-        
-        # 简单分割：先找 diff 和 code 块
         remaining = content
         
         while remaining:
-            # 找 diff 块
             diff_match = re.search(r'```diff\n(.*?)```', remaining, re.DOTALL)
             code_match = re.search(r'```(\w+)?\n(.*?)```', remaining, re.DOTALL)
             
-            # 找到最近的块
             matches = []
             if diff_match:
                 matches.append(("diff", diff_match))
@@ -342,78 +231,61 @@ class MainScreen(Screen):
                 matches.append(("code", code_match))
             
             if not matches:
-                # 没有更多块
                 parts.append({"type": "text", "content": remaining.strip()})
                 break
             
-            # 选择最早的匹配
             matches.sort(key=lambda x: x[1].start())
             block_type, match = matches[0]
             
-            # 添加前面的文本
             if match.start() > 0:
                 text = remaining[:match.start()].strip()
                 if text:
                     parts.append({"type": "text", "content": text})
             
-            # 添加块
             if block_type == "diff":
                 parts.append({"type": "diff", "content": match.group(1)})
             elif block_type == "code":
-                language = match.group(1) or ""
-                parts.append({"type": "code", "content": match.group(2), "language": language})
+                lang = match.group(1) or ""
+                parts.append({"type": "code", "content": match.group(2), "language": lang})
             
             remaining = remaining[match.end():]
         
         return parts
     
-    def _render_diff(self, container: ScrollableContainer, diff_content: str, filename: Optional[str] = None):
-        """渲染 diff 块."""
-        diff_widget = Vertical(classes="diff-block")
-        
-        header = filename or "diff"
-        diff_widget.mount(Static(f"--- {header}", classes="diff-header"))
-        
-        for line in diff_content.split("\n"):
+    def _render_diff(self, log: RichLog, diff: str):
+        log.write("")
+        log.write("[bold #e0e0e0]--- diff[/bold #e0e0e0]")
+        for line in diff.split("\n"):
             if line.startswith("+"):
-                diff_widget.mount(Static(line, classes="diff-line-added"))
+                log.write(f"[bold #3fb950]{line}[/bold #3fb950]")
             elif line.startswith("-"):
-                diff_widget.mount(Static(line, classes="diff-line-removed"))
+                log.write(f"[bold #f85149]{line}[/bold #f85149]")
             elif line.startswith("@@"):
-                diff_widget.mount(Static(line, classes="diff-line-context"))
+                log.write(f"[#888888]{line}[/#888888]")
             else:
-                diff_widget.mount(Static(line, classes="diff-line-context"))
-        
-        container.mount(diff_widget)
+                log.write(f"[#aaaaaa]{line}[/#aaaaaa]")
+        log.write("[bold #e0e0e0]---[/bold #e0e0e0]")
+        log.write("")
     
-    def _render_code_block(self, container: ScrollableContainer, code: str, language: Optional[str] = None):
-        """渲染代码块."""
-        code_widget = Vertical(classes="code-block")
-        code_widget.mount(Static(language or "code", classes="code-header"))
-        code_widget.mount(Static(code, classes="code-content"))
-        container.mount(code_widget)
-    
-    def _scroll_to_bottom(self):
-        """滚动到底部."""
-        container = self.query_one("#messages_container", ScrollableContainer)
-        container.scroll_end(animate=False)
+    def _render_code(self, log: RichLog, code: str, lang: Optional[str] = None):
+        log.write("")
+        log.write(f"[bold #888888]--- {lang or 'code'}[/bold #888888]")
+        for line in code.split("\n"):
+            log.write(f"[#e0e0e0]{line}[/#e0e0e0]")
+        log.write("[bold #888888]---[/bold #888888]")
+        log.write("")
     
     def _on_chat_send(self, content: str):
-        """处理聊天发送."""
         active_model = get_active_model(self.app_config)
-        
         if not active_model:
-            self._add_system_message("No model selected. Use /model to configure.")
+            self._add_system_message("[bold yellow]No model selected.[/bold yellow] Use /model to configure.")
             return
-        
         if not active_model.api_key:
-            self._add_system_message("No API key configured. Use /model to edit.")
+            self._add_system_message("[bold yellow]No API key configured.[/bold yellow] Use /model to edit.")
             return
-        
         self.run_worker(self._process_chat_message(content))
     
     def _on_command(self, action: str, data: Optional[Dict]):
-        """处理指令."""
         handlers = {
             "show_settings": self._show_settings,
             "set_setting": self._update_setting,
@@ -431,38 +303,29 @@ class MainScreen(Screen):
             "run_command": self._run_command,
             "exit": self._exit,
         }
-        
         handler = handlers.get(action)
         if handler:
-            if data:
-                handler(data)
-            else:
-                handler()
+            handler(data) if data else handler()
     
     def _show_settings(self):
-        """显示设置."""
         ai = self.settings.ai
-        ui = self.settings.ui
-        
         lines = [
-            "Settings:",
-            "-" * 40,
+            "Settings:", "-" * 40,
             f"  stream:          {ai.stream}",
             f"  think_mode:      {ai.think_mode}",
             f"  think_fold:      {ai.think_fold}",
             f"  temperature:     {ai.temperature}",
             f"  show_tool_results: {ai.show_tool_results}",
+            f"  tool_results_fold: {ai.tool_results_fold}",
+            f"  markdown_render: {ai.markdown_render}",
             f"  auto_analyze:    {ai.auto_analyze}",
-            "",
-            "Usage: /setting key=value",
+            "", "Usage: /setting key=value",
         ]
         self._add_system_message("\n".join(lines))
     
     def _update_setting(self, data: Dict):
-        """更新设置."""
         key = data.get("key")
         value = data.get("value")
-        
         if key == "stream":
             self.settings.ai.stream = value
         elif key == "think_mode":
@@ -473,64 +336,57 @@ class MainScreen(Screen):
             self.settings.ai.temperature = value
         elif key == "show_tool_results":
             self.settings.ai.show_tool_results = value
+        elif key == "tool_results_fold":
+            self.settings.ai.tool_results_fold = value
+        elif key == "markdown_render":
+            self.settings.ai.markdown_render = value
         elif key == "auto_analyze":
             self.settings.ai.auto_analyze = value
-        
         save_settings(self.settings)
         self._add_system_message(f"Setting updated: {key} = {value}")
     
     def _show_setting(self, data: Dict):
-        """显示单个设置."""
-        key = data.get("key")
-        # ...
-        self._add_system_message(f"{key} = ...")
+        self._add_system_message(f"{data.get('key')} = ...")
     
     def _show_models(self):
-        """显示模型."""
         lines = ["Models:", "-" * 40]
         for m in self.app_config.models:
             active = "* " if m.id == self.app_config.active_model_id else "  "
             lines.append(f"  {active}{m.name} ({m.provider})")
-        lines.append("")
-        lines.append("Use /model select <id>")
+        lines.append(""); lines.append("Use /model select <id>")
         self._add_system_message("\n".join(lines))
     
     def _select_model(self, data: Dict):
-        """选择模型."""
         model_id = data.get("id")
         if set_active_model(self.app_config, model_id):
             active = get_active_model(self.app_config)
             if active:
-                self._add_system_message(f"Model: {active.name}")
+                self._add_system_message(f"Model activated: [bold]{active.name}[/bold]")
                 self.llm_client = LLMClient(active)
                 self._update_status_bar()
         else:
-            self._add_system_message(f"Model not found: {model_id}")
+            self._add_system_message(f"[bold red]Model not found: {model_id}[/bold red]")
     
     def _on_model_add(self, data: Dict):
-        """添加模型 - 从命令参数直接创建."""
         model_id = data.get("model_id")
         api_key = data.get("api_key")
         provider_str = data.get("provider", "custom")
         name = data.get("name", model_id)
         
         if not model_id or not api_key:
-            self._add_system_message("Error: model_id and api_key are required")
+            self._add_system_message("[bold red]Error: model_id and api_key are required[/bold red]")
             return
         
-        # 推断 provider
         try:
-            from ..core.models import ProviderType
             provider = ProviderType(provider_str.lower())
         except ValueError:
             provider = ProviderType.CUSTOM
         
-        # 设置默认 API base
         api_base = None
         if provider == ProviderType.DEEPSEEK:
             api_base = "https://api.deepseek.com/v1"
         elif provider == ProviderType.OPENAI:
-            api_base = None  # 使用默认
+            api_base = None
         elif provider == ProviderType.ANTHROPIC:
             api_base = "https://api.anthropic.com/v1"
         elif provider == ProviderType.GOOGLE:
@@ -542,114 +398,85 @@ class MainScreen(Screen):
         elif provider == ProviderType.OPENROUTER:
             api_base = "https://openrouter.ai/api/v1"
         
-        # 创建模型配置
-        from ..core.models import ModelConfig
         model = ModelConfig(
-            id=model_id,
-            name=name,
-            provider=provider,
-            model_id=model_id,
-            api_key=api_key,
-            api_base=api_base,
-            temperature=0.7,
-            max_tokens=4096,
-            context_window=8192,
-            enabled=True,
-            is_default=False,
+            id=model_id, name=name, provider=provider, model_id=model_id,
+            api_key=api_key, api_base=api_base, temperature=0.7,
+            max_tokens=4096, context_window=8192, enabled=True, is_default=False,
         )
-        
         add_model(self.app_config, model)
-        self._add_system_message(f"Model added: {name} ({provider.value})")
+        self._add_system_message(f"[bold green]Model added: {name} ({provider.value})[/bold green]")
         self._add_system_message(f"Use /model select {model_id} to activate")
     
     def _on_model_delete(self, data: Dict):
-        """删除模型."""
         model_id = data.get("id")
         if remove_model(self.app_config, model_id):
-            self._add_system_message(f"Model removed: {model_id}")
+            self._add_system_message(f"[bold yellow]Model removed: {model_id}[/bold yellow]")
     
     def _add_file_to_context(self, data: Dict):
-        """添加文件."""
         file_path = data.get("path")
         result = self.tool_executor.read_file(file_path)
         if result.status == ToolResultStatus.SUCCESS:
             self._add_system_message(f"File loaded: {file_path}")
-            # 显示文件内容预览
             preview = result.output[:500]
             if len(result.output) > 500:
                 preview += "\n... (truncated)"
             self._add_tool_result(f"read_file: {file_path}", preview)
         else:
-            self._add_system_message(f"Failed to load: {result.output}")
+            self._add_system_message(f"[bold red]Failed to load: {result.output}[/bold red]")
     
     def _show_diff(self, data: Optional[Dict] = None):
-        """显示 diff."""
         self._add_system_message("Diff: (not implemented in chat view)")
     
     def _clear_chat(self):
-        """清空聊天."""
         self.messages = []
-        container = self.query_one("#messages_container", ScrollableContainer)
-        for child in list(container.children):
-            child.remove()
+        log = self.query_one("#messages_log", RichLog)
+        log.clear()
         self._add_system_message("Chat cleared.")
     
     def _undo_last_change(self):
-        """撤销."""
         self._add_system_message("Undo not yet implemented")
     
     def _git_commit(self, data: Dict):
-        """Git 提交."""
         message = data.get("message", "Hakimi update")
         if git_utils.is_git_repo(str(self.project_path)):
             files = [f for _, f in git_utils.get_git_status(str(self.project_path))]
             if files:
                 git_utils.git_add(str(self.project_path), files)
                 git_utils.git_commit(str(self.project_path), message)
-                self._add_system_message(f"Committed: {message}")
+                self._add_system_message(f"[bold green]Committed: {message}[/bold green]")
             else:
                 self._add_system_message("No changes to commit")
         else:
             self._add_system_message("Not a git repository")
     
     def _show_status(self):
-        """显示状态."""
         lines = ["Status:", "-" * 40]
-        
         if git_utils.is_git_repo(str(self.project_path)):
             branch = git_utils.get_git_branch(str(self.project_path))
             files = git_utils.get_git_status(str(self.project_path))
             lines.append(f"  Git branch: {branch}")
             lines.append(f"  Changes: {len(files)}")
-        
         active = get_active_model(self.app_config)
         if active:
             lines.append(f"  Model: {active.name}")
-        
         lines.append(f"  Project: {self.project_path}")
-        
         self._add_system_message("\n".join(lines))
     
     def _run_command(self, data: Dict):
-        """运行命令."""
         command = data.get("command")
         result = self.tool_executor.execute_command(command)
-        
         if result.status == ToolResultStatus.SUCCESS:
             self._add_tool_result(f"$ {command}", result.output)
         else:
             self._add_tool_result(f"$ {command} (exit {result.exit_code})", result.output)
     
     def _exit(self):
-        """退出."""
         if self.llm_client:
             asyncio.create_task(self.llm_client.close())
         self.app.exit()
     
     async def _process_chat_message(self, content: str):
-        """处理聊天消息."""
         worker = get_current_worker()
-        
         active_model = get_active_model(self.app_config)
         if not active_model:
             return
@@ -662,43 +489,85 @@ class MainScreen(Screen):
         self.is_processing = True
         self._update_status_bar()
         
-        messages = self.messages.copy()
-        api_messages = [m for m in messages if m["role"] in ("user", "assistant")]
-        
-        system_prompt = self._build_system_prompt()
-        
-        full_response = ""
-        
         try:
-            async for chunk in self.llm_client.chat(api_messages, system_prompt=system_prompt, stream=self.settings.ai.stream):
+            max_rounds = 10
+            for round_num in range(max_rounds):
+                api_messages = [m for m in self.messages if m["role"] in ("user", "assistant")]
+                system_prompt = self._build_system_prompt()
+                full_response = ""
+                
+                async for chunk in self.llm_client.chat(api_messages, system_prompt=system_prompt, stream=self.settings.ai.stream):
+                    if worker.is_cancelled:
+                        break
+                    full_response += chunk
+                
                 if worker.is_cancelled:
                     break
-                full_response += chunk
+                
+                tool_results = await self._execute_tool_calls(full_response)
+                
+                if not tool_results:
+                    # 没有工具调用 -> 可能是最终回答，检查是否是过渡性回复
+                    text_only = re.sub(r'```tool\s*\n.*?\n```', '', full_response, flags=re.DOTALL).strip()
+                    if self._is_transitional_response(text_only) and round_num < max_rounds - 1:
+                        # 过渡性回复：保存为 assistant 消息，追加催促提示，继续循环
+                        self.messages.append({"role": "assistant", "content": full_response})
+                        self._add_system_message(f"[#888888]> {text_only}[/#888888]")
+                        self.messages.append({
+                            "role": "user",
+                            "content": "Please provide the complete analysis or answer based on the data already provided. Do not use transitional phrases."
+                        })
+                        continue  # 继续下一轮，让 AI 给出真正的分析
+                    
+                    # 真正的最终回答
+                    self._add_ai_message(full_response)
+                    break
+                else:
+                    # 中间轮次：保存 assistant 消息
+                    self.messages.append({"role": "assistant", "content": full_response})
+                    
+                    # 显示AI的中间回复文本（去除工具块）
+                    text_only = re.sub(r'```tool\s*\n.*?\n```', '', full_response, flags=re.DOTALL).strip()
+                    if text_only:
+                        self._add_system_message(f"[#888888]> {text_only}[/#888888]")
+                    
+                    # 添加工具结果到消息历史，作为 user 消息让AI继续思考
+                    for tr in tool_results:
+                        self.messages.append({
+                            "role": "user",
+                            "content": f"[Tool '{tr['tool_name']}' result]\n```\n{tr['output']}\n```"
+                        })
             
-            if not worker.is_cancelled:
-                self._add_ai_message(full_response)
-                await self._check_tool_calls(full_response)
+            if round_num >= max_rounds - 1:
+                self._add_system_message("[bold yellow]Max tool rounds reached (10). Stopping.[/bold yellow]")
                 
         except Exception as e:
-            self.app.call_from_thread(self._add_system_message, f"Error: {str(e)}")
+            self._add_system_message(f"[bold red]Error: {str(e)}[/bold red]")
         finally:
             self.is_processing = False
-            self.app.call_from_thread(self._update_status_bar)
+            self._update_status_bar()
     
     def _build_system_prompt(self) -> str:
-        """构建系统提示词."""
         return f"""You are Hakimi Codex, a professional coding assistant.
 
 Project: {self.project_path.name}
 Path: {self.project_path}
 
-## Rules
+## CRITICAL RULES
 
 1. Use Chinese for responses, English for code comments
 2. Be concise and professional
 3. Show code changes in diff format using ```diff blocks
 4. When modifying files, show the full content using ```code blocks
 5. Use tools by returning JSON in ```tool blocks
+
+## MOST IMPORTANT: TOOL RESULT HANDLING
+
+After receiving tool results (file contents, directory listings, command output, etc.), you MUST immediately analyze the data and provide your complete analysis or answer. 
+
+DO NOT say things like "let me check", "let me confirm", "我来确认一下", "让我看看", "让我确认一下" or similar transitional phrases when the tool results already contain the data. The user is waiting for your analysis, not for you to ask for more time.
+
+If the data is sufficient, provide the full analysis right away. If you genuinely need more data, call another tool immediately in the same response.
 
 ## Available Tools
 
@@ -723,74 +592,127 @@ Path: {self.project_path}
 ```
 """
     
-    async def _check_tool_calls(self, content: str):
-        """检查并执行工具调用."""
-        pattern = r'```tool\s*\n(.*?)\n```'
-        matches = list(re.finditer(pattern, content, re.DOTALL))
+    def _is_transitional_response(self, text: str) -> bool:
+        """检测回复是否是过渡性的（拿到工具结果后只说了"让我看看"之类的）.
         
+        Returns True if the response looks transitional and needs another round.
+        """
+        if not text or len(text) < 10:
+            return False  # 空或极短文本，直接当作最终回答
+        
+        text_lower = text.lower()
+        
+        # 过渡性关键词（中英文）
+        transitional_keywords = [
+            # 中文
+            "让我看看", "让我确认", "让我检查", "让我确认一下", "让我检查下",
+            "我来确认", "我来检查", "我来确认一下", "我来检查下",
+            "需要确认", "需要确认一下", "需要检查", "需要检查下",
+            "确认一下", "检查下", "检查", "确认",
+            "让我先", "我先",
+            "现在让我", "现在我来", "现在我",
+            "先确认", "先检查", "先查看",
+            "了解一下", "看一下",
+            # 英文
+            "let me check", "let me confirm", "let me verify",
+            "let me take a look", "let me see", "let me review",
+            "i will check", "i will confirm", "i will verify",
+            "i need to check", "i need to confirm", "i need to verify",
+            "need to check", "need to confirm", "need to verify",
+            "checking", "confirming", "verifying",
+            "taking a look", "taking a look at",
+            "reviewing", "looking at",
+            "hold on", "one moment", "just a moment",
+            "wait a moment", "give me a moment",
+            "looking into", "going to check", "going to confirm",
+            "let me review", "i will review", "need to review",
+        ]
+        
+        # 检查是否包含过渡性关键词
+        has_transitional = any(kw in text_lower for kw in transitional_keywords)
+        
+        if not has_transitional:
+            return False
+        
+        # 如果文本很短（< 150 字符）且包含过渡性关键词，直接判定为过渡性
+        if len(text) < 150:
+            return True
+        
+        # 中等长度文本（150-300 字符）：如果包含过渡性关键词，但没有实质性分析内容
+        if len(text) <= 300:
+            # 检查是否有实质性分析内容
+            has_analysis = any(kw in text_lower for kw in [
+                "分析", "总结", "结论", "建议", "方案", "实现",
+                "修改", "优化", "问题", "原因", "方法", "步骤", "结果",
+                "analysis", "summary", "conclusion", "recommendation",
+                "solution", "implementation", "issue", "cause", "result",
+            ])
+            # 包含代码块或 diff 块也说明是实质性内容
+            has_code_blocks = "```" in text or "diff" in text_lower
+            
+            if has_analysis or has_code_blocks:
+                return False
+            return True
+        
+        # 长文本（> 300 字符），即使有过渡性关键词，也认为是实质性回复
+        return False
+
+    async def _execute_tool_calls(self, content: str) -> List[Dict[str, str]]:
+        """检测并执行工具调用，返回工具结果列表."""
+        matches = list(re.finditer(r'```tool\s*\n(.*?)\n```', content, re.DOTALL))
         if not matches:
-            return
+            return []
         
+        results = []
         for match in matches:
             try:
                 tool_call = json.loads(match.group(1).strip())
                 tool_name = tool_call.get("tool")
                 parameters = tool_call.get("parameters", {})
                 
-                self.app.call_from_thread(
-                    self._add_tool_result,
+                self._add_tool_result(
                     f"tool: {tool_name}",
                     f"parameters: {json.dumps(parameters, indent=2, ensure_ascii=False)}"
                 )
                 
                 result = self.tool_executor.execute_tool(tool_name, parameters)
+                self._add_tool_result(f"result: {tool_name}", result.output)
                 
-                self.app.call_from_thread(
-                    self._add_tool_result,
-                    f"result: {tool_name}",
-                    result.output
-                )
-                
+                results.append({
+                    "tool_name": tool_name,
+                    "output": result.output,
+                    "status": "success" if result.status == ToolResultStatus.SUCCESS else "error"
+                })
             except json.JSONDecodeError as e:
-                self.app.call_from_thread(
-                    self._add_system_message,
-                    f"Tool parse error: {e}"
-                )
+                self._add_system_message(f"[bold red]Tool parse error: {e}[/bold red]")
+        
+        return results
+
     
     def on_input_submitted(self, event: Input.Submitted):
-        """输入提交."""
         if event.input.id == "chat_input":
             self._process_input()
     
     def _process_input(self):
-        """处理输入."""
         input_widget = self.query_one("#chat_input", Input)
         content = input_widget.value.strip()
-        
         if not content or self.is_processing:
             return
-        
         input_widget.value = ""
         
-        # 检查是否是命令
         is_cmd, cmd, args = self.command_handler.parse(content)
-        
         if is_cmd:
             result = self.command_handler.handle(content)
-            
             if result.message:
                 if result.success:
                     self._add_system_message(result.message)
                 else:
-                    self._add_system_message(f"Error: {result.message}")
-            
+                    self._add_system_message(f"[bold red]Error: {result.message}[/bold red]")
             if result.action:
                 self._on_command(result.action, result.data)
         else:
-            # 普通消息
             self._add_user_message(content)
             self._on_chat_send(content)
     
     def action_quit(self):
-        """退出."""
         self._exit()

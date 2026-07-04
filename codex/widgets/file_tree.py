@@ -53,7 +53,7 @@ class FileTreeWidget(Vertical):
     
     def compose(self):
         """组装组件."""
-        yield Static(f"📁 {self.root_path.name}", classes="title")
+        yield Static(f"[目录] {self.root_path.name}", classes="title")
         tree = Tree(f"{self.root_path.name}", id="file_tree")
         tree.show_root = False
         tree.guide_depth = 2
@@ -87,7 +87,7 @@ class FileTreeWidget(Vertical):
                 continue
             
             if entry.is_dir():
-                icon = "📁"
+                icon = "[目录]"
                 label = f"{icon} {entry.name}"
                 child_node = node.add(label, data=str(entry))
                 child_node.allow_expand = True
@@ -101,38 +101,38 @@ class FileTreeWidget(Vertical):
         """根据文件类型返回图标."""
         suffix = path.suffix.lower()
         icons = {
-            ".py": "🐍",
-            ".js": "📜",
-            ".ts": "📘",
-            ".jsx": "⚛️",
-            ".tsx": "⚛️",
-            ".html": "🌐",
-            ".css": "🎨",
-            ".scss": "🎨",
-            ".json": "📋",
-            ".yaml": "⚙️",
-            ".yml": "⚙️",
-            ".toml": "⚙️",
-            ".md": "📝",
-            ".rst": "📝",
-            ".txt": "📄",
-            ".rs": "🦀",
-            ".go": "🔵",
-            ".java": "☕",
-            ".kt": "📱",
-            ".cpp": "⚙️",
-            ".c": "⚙️",
-            ".h": "⚙️",
-            ".hpp": "⚙️",
-            ".rb": "💎",
-            ".php": "🐘",
-            ".swift": "🍎",
-            ".dart": "🎯",
-            ".sh": "🐚",
-            ".dockerfile": "🐳",
-            ".sql": "🗄️",
+            ".py": "[py]",
+            ".js": "[js]",
+            ".ts": "[ts]",
+            ".jsx": "[jsx]",
+            ".tsx": "[jsx]",
+            ".html": "[html]",
+            ".css": "[css]",
+            ".scss": "[css]",
+            ".json": "[json]",
+            ".yaml": "[cfg]",
+            ".yml": "[cfg]",
+            ".toml": "[cfg]",
+            ".md": "[md]",
+            ".rst": "[md]",
+            ".txt": "[file]",
+            ".rs": "[rs]",
+            ".go": "[O]",
+            ".java": "[java]",
+            ".kt": "[kt]",
+            ".cpp": "[cfg]",
+            ".c": "[cfg]",
+            ".h": "[cfg]",
+            ".hpp": "[cfg]",
+            ".rb": "[rb]",
+            ".php": "[php]",
+            ".swift": "[swift]",
+            ".dart": "[dart]",
+            ".sh": "[sh]",
+            ".dockerfile": "[docker]",
+            ".sql": "[sql]",
         }
-        return icons.get(suffix, "📄")
+        return icons.get(suffix, "[file]")
     
     def on_tree_node_selected(self, event: Tree.NodeSelected):
         """节点选择事件."""

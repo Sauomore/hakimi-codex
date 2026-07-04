@@ -5,7 +5,6 @@ import argparse
 from pathlib import Path
 
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer
 
 from .screens.main_screen import MainScreen
 
@@ -16,7 +15,6 @@ class HakimiApp(App):
     CSS_PATH = "styles/codex.tcss"
     
     BINDINGS = [
-        ("q", "quit", "Quit"),
         ("ctrl+c", "quit", "Quit"),
     ]
     

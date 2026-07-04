@@ -70,17 +70,17 @@ class ModelSelectorWidget(Vertical):
     
     def compose(self) -> ComposeResult:
         """组装组件."""
-        yield Static("🤖 模型管理", classes="selector-header")
+        yield Static("[模型] 模型管理", classes="selector-header")
         
         table = DataTable(id="model_table", cursor_type="row")
         table.add_columns("状态", "名称", "提供商", "模型ID", "上下文")
         yield table
         
         with Horizontal(classes="button-bar"):
-            yield Button("➕ 添加", id="btn_add_model", variant="success")
-            yield Button("✏️ 编辑", id="btn_edit_model", variant="primary")
-            yield Button("🗑️ 删除", id="btn_delete_model", variant="error")
-            yield Button("✅ 选择", id="btn_select_model", variant="primary")
+            yield Button("[+] 添加", id="btn_add_model", variant="success")
+            yield Button("[*] 编辑", id="btn_edit_model", variant="primary")
+            yield Button("[-] 删除", id="btn_delete_model", variant="error")
+            yield Button("[选择]", id="btn_select_model", variant="primary")
     
     def on_mount(self):
         """挂载后加载数据."""
@@ -92,22 +92,22 @@ class ModelSelectorWidget(Vertical):
         table.clear()
         
         provider_icons = {
-            ProviderType.OPENAI: "🔵",
-            ProviderType.ANTHROPIC: "🟣",
-            ProviderType.GOOGLE: "🔴",
-            ProviderType.DEEPSEEK: "🟢",
-            ProviderType.MISTRAL: "🟠",
-            ProviderType.OLLAMA: "⚪",
-            ProviderType.OPENROUTER: "🟤",
-            ProviderType.CUSTOM: "⚫",
+            ProviderType.OPENAI: "[O]",
+            ProviderType.ANTHROPIC: "[A]",
+            ProviderType.GOOGLE: "[G]",
+            ProviderType.DEEPSEEK: "[D]",
+            ProviderType.MISTRAL: "[M]",
+            ProviderType.OLLAMA: "[L]",
+            ProviderType.OPENROUTER: "[R]",
+            ProviderType.CUSTOM: "[C]",
         }
         
         for i, model in enumerate(self.models):
-            status = "✅" if model.enabled else "❌"
+            status = "[启用]" if model.enabled else "[禁用]"
             if model.is_default:
-                status += " ⭐"
+                status += " [默认]"
             
-            icon = provider_icons.get(model.provider, "⚫")
+            icon = provider_icons.get(model.provider, "[C]")
             provider = f"{icon} {model.provider}"
             
             context = f"{model.context_window // 1000}K"

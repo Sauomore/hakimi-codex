@@ -63,7 +63,7 @@ class ToolExecutor:
         if self._check_dangerous(command):
             return ToolResult(
                 status=ToolResultStatus.ERROR,
-                output="❌ 检测到危险命令，已拒绝执行。",
+                output="[错误] 检测到危险命令，已拒绝执行。",
                 exit_code=1
             )
         
@@ -106,13 +106,13 @@ class ToolExecutor:
         except subprocess.TimeoutExpired:
             return ToolResult(
                 status=ToolResultStatus.TIMEOUT,
-                output=f"❌ 命令执行超时（超过 {self.command_timeout} 秒）",
+                output=f"[错误] 命令执行超时（超过 {self.command_timeout} 秒）",
                 exit_code=124
             )
         except Exception as e:
             return ToolResult(
                 status=ToolResultStatus.ERROR,
-                output=f"❌ 执行异常: {str(e)}",
+                output=f"[错误] 执行异常: {str(e)}",
                 exit_code=1
             )
     
@@ -185,7 +185,7 @@ class ToolExecutor:
             
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
-                output=f"✅ 文件已写入: {path}",
+                output=f"[完成] 文件已写入: {path}",
                 metadata={"file_path": str(path), "size": len(content)}
             )
             
@@ -226,7 +226,7 @@ class ToolExecutor:
             
             entries = []
             for item in sorted(path.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
-                icon = "📁" if item.is_dir() else "📄"
+                icon = "[目录]" if item.is_dir() else "[文件]"
                 size = ""
                 if item.is_file():
                     size_bytes = item.stat().st_size
@@ -242,7 +242,7 @@ class ToolExecutor:
             
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
-                output=f"📂 {path}\n" + "\n".join(entries) or "(空目录)",
+                output=f"[目录] {path}\n" + "\n".join(entries) or "(空目录)",
                 metadata={"path": str(path), "count": len(entries)}
             )
             

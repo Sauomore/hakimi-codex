@@ -1,193 +1,90 @@
-/* Hakimi Codex - Claude Code style theme */
+/* Hakimi Codex - High contrast dark theme */
 
 Screen {
-    background: #0d1117;
+    background: #0a0a0a;
 }
 
 MainScreen {
     layout: vertical;
     width: 100%;
     height: 100%;
-    background: #0d1117;
+    background: #0a0a0a;
 }
 
 #status_bar {
     height: 1;
-    background: #161b22;
-    color: #8b949e;
+    background: #141414;
+    color: #cccccc;
     padding: 0 2;
 }
 
-#messages_container {
+#messages_log {
     height: 1fr;
-    background: #0d1117;
+    background: #0a0a0a;
+    color: #f0f0f0;
     border: none;
+    padding: 0 1;
 }
 
 #input_container {
     height: auto;
-    background: #161b22;
-    border-top: solid #30363d;
+    background: #141414;
+    border-top: solid #333333;
     padding: 0 1;
 }
 
-#input_container Input {
+#chat_input {
     height: auto;
     min-height: 1;
-    background: #0d1117;
-    color: #e6edf3;
+    background: #141414;
+    color: #f0f0f0;
     border: none;
     padding: 0 1;
-}
-
-#input_container Input:focus {
-    border: none;
 }
 
 #input_hint {
     height: 1;
-    color: #484f58;
+    color: #888888;
+    background: #141414;
     padding: 0 2;
-}
-
-.user-msg {
-    height: auto;
-    padding: 0 2;
-    margin: 1 0;
-    color: #58a6ff;
-}
-
-.ai-msg {
-    height: auto;
-    padding: 0 2;
-    margin: 1 0;
-    color: #e6edf3;
-}
-
-.system-msg {
-    height: auto;
-    padding: 0 2;
-    margin: 0;
-    color: #484f58;
-}
-
-.tool-msg {
-    height: auto;
-    padding: 0 2;
-    margin: 0;
-    color: #8b949e;
-    background: #161b22;
-    border-left: solid #30363d;
-}
-
-.diff-block {
-    height: auto;
-    margin: 1 0;
-    padding: 0;
-}
-
-.diff-header {
-    height: 1;
-    background: #161b22;
-    color: #e6edf3;
-    padding: 0 2;
-}
-
-.diff-line-added {
-    height: auto;
-    color: #3fb950;
-    background: #0f2d1f;
-    padding: 0 2;
-}
-
-.diff-line-removed {
-    height: auto;
-    color: #f85149;
-    background: #3d1010;
-    padding: 0 2;
-}
-
-.diff-line-context {
-    height: auto;
-    color: #8b949e;
-    padding: 0 2;
-}
-
-.code-block {
-    height: auto;
-    margin: 1 0;
-    background: #161b22;
-    border: solid #30363d;
-}
-
-.code-header {
-    height: 1;
-    background: #21262d;
-    color: #8b949e;
-    padding: 0 2;
-}
-
-.code-content {
-    height: auto;
-    padding: 0 2;
-    color: #e6edf3;
-}
-
-.tool-call {
-    height: auto;
-    margin: 1 0;
-    background: #161b22;
-    border-left: solid #58a6ff;
-}
-
-.tool-call-header {
-    height: 1;
-    color: #58a6ff;
-    padding: 0 2;
-}
-
-.tool-call-content {
-    height: auto;
-    padding: 0 2;
-    color: #8b949e;
 }
 
 ModelEditDialog {
     align: center middle;
-    background: #0d1117 80%;
+    background: #0a0a0a 80%;
 }
 
 ModelEditDialog > Container {
     width: 80;
     height: auto;
-    border: solid #30363d;
-    background: #161b22;
+    border: solid #333333;
+    background: #141414;
     padding: 1 2;
 }
 
 ModelEditDialog Container > Static.title {
     text-align: center;
-    color: #58a6ff;
+    color: #4da6ff;
     height: 1;
     margin-bottom: 1;
 }
 
 ModelEditDialog Container > Input {
     margin: 1 0;
-    background: #0d1117;
-    color: #e6edf3;
-    border: solid #30363d;
+    background: #0a0a0a;
+    color: #f0f0f0;
+    border: solid #333333;
 }
 
 ModelEditDialog Container > Input:focus {
-    border: solid #58a6ff;
+    border: solid #4da6ff;
 }
 
 ModelEditDialog Container > Select {
     margin: 1 0;
-    background: #0d1117;
-    color: #e6edf3;
-    border: solid #30363d;
+    background: #0a0a0a;
+    color: #f0f0f0;
+    border: solid #333333;
 }
 
 ModelEditDialog Container > Horizontal {
@@ -198,15 +95,15 @@ ModelEditDialog Container > Horizontal {
 
 ModelEditDialog Container > Horizontal > Button {
     margin: 0 1;
-    background: #21262d;
-    color: #e6edf3;
-    border: solid #30363d;
+    background: #1f1f1f;
+    color: #f0f0f0;
+    border: solid #333333;
 }
 
 ModelEditDialog Container > Horizontal > Button:hover {
-    background: #30363d;
+    background: #333333;
 }
 
 ModelEditDialog Container > Horizontal > Button:focus {
-    background: #58a6ff;
+    background: #4da6ff;
 }

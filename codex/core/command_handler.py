@@ -42,7 +42,9 @@ class CommandHandler:
         "font_size": ("字体大小", int, "8-24"),
         "theme": ("界面主题", str, "dark/light"),
         "show_tool_results": ("显示工具执行结果", bool, "true/false"),
+        "tool_results_fold": ("工具结果默认折叠", bool, "true/false"),
         "auto_analyze": ("启动时自动分析项目", bool, "true/false"),
+        "markdown_render": ("AI 消息 Markdown 渲染", bool, "true/false"),
     }
     
     def __init__(self):
