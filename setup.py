@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="hakimi-cli",
-    version="0.1.0",
+    version="0.2.0",
     description="现代化 AI 代码助手 CLI 工具",
     author="Hakimi Team",
     packages=find_packages(),

@@ -1,69 +1,264 @@
-/* Hakimi 主题样式 - 通用组件样式 */
+/* Hakimi Codex - 简洁主题样式 */
 
 Screen {
     align: center middle;
-    background: $surface-darken-1;
+    background: #1f2937;
 }
 
-/* 模态框 */
-ModalScreen {
-    align: center middle;
-    background: $background 60%;
-}
-
-ModalScreen > Container {
-    width: 80;
-    height: auto;
-    max-height: 40;
-    border: solid $primary;
-    background: $surface;
-    padding: 1 2;
-}
-
-ModalScreen > Container > Label {
+/* 主界面 */
+MainScreen {
+    layout: horizontal;
     width: 100%;
-    content-align: center middle;
+    height: 100%;
+    background: #1f2937;
+}
+
+/* 左侧面板 - AI 交互 */
+#left_panel {
+    width: 55%;
+    height: 100%;
+    layout: vertical;
+    border: solid #374151;
+    background: #1f2937;
+}
+
+/* 右侧面板 - 代码/Diff */
+#right_panel {
+    width: 45%;
+    height: 100%;
+    layout: vertical;
+    border: solid #374151;
+    background: #1f2937;
+}
+
+/* 状态栏 */
+#status_bar {
+    height: 1;
+    background: #111827;
+    color: #6b7280;
+    content-align: left middle;
+    padding: 0 1;
+    text-style: dim;
+}
+
+/* 聊天面板 */
+ChatPanel {
+    width: 100%;
+    height: 100%;
+    background: #1f2937;
+}
+
+ChatPanel > ScrollableContainer {
+    height: 1fr;
+    background: #1f2937;
+    border: none;
+    scrollbar-color: #374151;
+    scrollbar-background: #1f2937;
+}
+
+ChatPanel > Input {
+    height: auto;
+    min-height: 1;
+    border-top: solid #374151;
+    background: #111827;
+    color: #e5e7eb;
+    padding: 0 1;
+}
+
+ChatPanel > Input:focus {
+    border: solid #3b82f6;
+}
+
+/* 用户消息 */
+UserMessage {
+    height: auto;
+    margin: 1 0;
+    padding: 0 1;
+    color: #e5e7eb;
+}
+
+UserMessage > Static {
+    color: #60a5fa;
     text-style: bold;
-    color: $primary-lighten-2;
+}
+
+/* AI 消息 */
+AIMessage {
+    height: auto;
+    margin: 1 0;
+    padding: 0 1;
+}
+
+AIMessage .output-content {
+    color: #e5e7eb;
+    padding: 0 1;
+    margin-top: 1;
+}
+
+/* Thinking 折叠 */
+.thinking-collapsible {
+    background: #111827;
+    color: #6b7280;
+    padding: 0 1;
+    border: solid #374151;
+}
+
+.thinking-collapsible:focus {
+    background: #1f2937;
+}
+
+.thinking-content {
+    color: #6b7280;
+    padding: 0 1;
+    text-style: dim;
+}
+
+/* 系统消息 */
+SystemMessage {
+    height: auto;
+    margin: 1 0;
+    padding: 0 1;
+    color: #6b7280;
+    text-style: dim;
+}
+
+/* 工具结果 */
+ToolResultMessage {
+    height: auto;
+    margin: 1 0;
+    padding: 0 1;
+    color: #9ca3af;
+    background: #111827;
+    border-left: solid #374151;
+}
+
+/* Diff 面板 */
+DiffPanel {
+    width: 100%;
+    height: 100%;
+    background: #1f2937;
+    border: solid #374151;
+}
+
+DiffPanel > .diff-header {
+    height: 1;
+    content-align: center middle;
+    background: #111827;
+    color: #e5e7eb;
+    text-style: bold;
+    border-bottom: solid #374151;
+}
+
+DiffPanel > ScrollableContainer {
+    height: 1fr;
+    background: #1f2937;
+    border: none;
+    scrollbar-color: #374151;
+    scrollbar-background: #1f2937;
+}
+
+/* Diff 行 */
+DiffLine.added {
+    background: #1a3a1a;
+    color: #4ade80;
+}
+
+DiffLine.removed {
+    background: #3a1a1a;
+    color: #f87171;
+}
+
+DiffLine.context {
+    color: #9ca3af;
+}
+
+DiffLine > Static {
+    height: auto;
+    padding: 0 1;
+}
+
+/* 启动画面 */
+SplashScreen {
+    align: center middle;
+    background: #111827;
+}
+
+SplashScreen > Container {
+    width: 60;
+    height: auto;
+    border: solid #374151;
+    background: #1f2937;
+    padding: 2;
+}
+
+SplashScreen Container > Static.logo {
+    text-align: center;
+    text-style: bold;
+    color: #3b82f6;
+    height: 3;
+}
+
+SplashScreen Container > Static.subtitle {
+    text-align: center;
+    color: #6b7280;
+    height: 1;
     margin-bottom: 1;
 }
 
-ModalScreen > Container > Input {
+SplashScreen Container > Button {
     margin: 1 0;
+    width: 100%;
+    background: #374151;
+    color: #e5e7eb;
+    border: solid #4b5563;
 }
 
-ModalScreen > Container > Button {
-    margin: 1 0;
+SplashScreen Container > Button:hover {
+    background: #4b5563;
+}
+
+SplashScreen Container > Button:focus {
+    background: #3b82f6;
 }
 
 /* 模型编辑对话框 */
 ModelEditDialog {
     align: center middle;
-    background: $background 70%;
+    background: #1f2937 70%;
 }
 
 ModelEditDialog > Container {
     width: 90;
     height: auto;
-    border: solid $primary;
-    background: $surface;
+    border: solid #374151;
+    background: #1f2937;
     padding: 1 2;
 }
 
 ModelEditDialog Container > Static.title {
     text-style: bold;
     text-align: center;
-    color: $primary-lighten-2;
+    color: #3b82f6;
     height: 1;
     margin-bottom: 1;
 }
 
 ModelEditDialog Container > Input {
     margin: 1 0;
+    background: #111827;
+    color: #e5e7eb;
+    border: solid #374151;
+}
+
+ModelEditDialog Container > Input:focus {
+    border: solid #3b82f6;
 }
 
 ModelEditDialog Container > Select {
     margin: 1 0;
+    background: #111827;
+    color: #e5e7eb;
+    border: solid #374151;
 }
 
 ModelEditDialog Container > Horizontal {
@@ -74,66 +269,15 @@ ModelEditDialog Container > Horizontal {
 
 ModelEditDialog Container > Horizontal > Button {
     margin: 0 1;
+    background: #374151;
+    color: #e5e7eb;
+    border: solid #4b5563;
 }
 
-/* 欢迎画面 */
-SplashScreen {
-    align: center middle;
-    background: $surface-darken-2;
+ModelEditDialog Container > Horizontal > Button:hover {
+    background: #4b5563;
 }
 
-SplashScreen > Container {
-    width: 60;
-    height: auto;
-    border: solid $primary;
-    background: $surface;
-    padding: 2;
-}
-
-SplashScreen Container > Static.logo {
-    text-align: center;
-    text-style: bold;
-    color: $primary-lighten-2;
-    height: 3;
-}
-
-SplashScreen Container > Static.subtitle {
-    text-align: center;
-    color: $text-muted;
-    height: 1;
-    margin-bottom: 1;
-}
-
-SplashScreen Container > Button {
-    margin: 1 0;
-    width: 100%;
-}
-
-/* TabbedContent 样式 */
-TabbedContent {
-    background: $surface-darken-1;
-}
-
-TabbedContent > TabBar {
-    background: $primary-darken-2;
-}
-
-TabbedContent > TabBar > Tab {
-    color: $text-muted;
-}
-
-TabbedContent > TabBar > Tab:hover {
-    color: $text;
-    background: $primary-darken-1;
-}
-
-TabbedContent > TabBar > Tab.active {
-    color: $text;
-    background: $primary;
-    text-style: bold;
-}
-
-TabbedContent > TabPane {
-    background: $surface-darken-1;
-    padding: 0;
+ModelEditDialog Container > Horizontal > Button:focus {
+    background: #3b82f6;
 }

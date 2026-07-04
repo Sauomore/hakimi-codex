@@ -1,109 +1,65 @@
-"""主工作界面."""
+"""主工作界面 - 简洁风格：左侧 AI 交互，右侧代码/Diff."""
 
 import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Static, Button, Header, Footer, RichLog, DataTable, ContentSwitcher, Input, TabbedContent, TabPane
+from textual.widgets import Static, Button, Header, Footer, Input, TabbedContent, TabPane
 from textual.reactive import reactive
 from textual.worker import Worker, get_current_worker
 
 from ..core.models import ModelConfig
-from ..core.config import AppConfig, get_active_model, add_model, remove_model
+from ..core.config import AppConfig, get_active_model, add_model, remove_model, load_config, set_active_model
 from ..core.llm_client import LLMClient
 from ..core import git_utils
 from ..core.tools import ToolExecutor, ToolResultStatus
-from ..widgets.file_tree import FileTreeWidget
+from ..core.settings_manager import Settings, load_settings, save_settings
+from ..core.command_handler import CommandHandler, CommandResult
 from ..widgets.chat_panel import ChatPanel
-from ..widgets.model_selector import ModelSelectorWidget
+from ..widgets.diff_panel import DiffPanel
 from ..widgets.code_view import CodeViewerWidget
-from ..widgets.terminal_panel import TerminalPanel
 from .model_edit_dialog import ModelEditDialog
 
 
 class MainScreen(Screen):
-    """主工作界面."""
+    """主工作界面 - 简洁双栏布局."""
     
     CSS = """
     MainScreen {
         layout: horizontal;
         width: 100%;
         height: 100%;
-        background: $surface-darken-1;
+        background: $surface;
     }
     
-    /* 左侧面板 */
     #left_panel {
-        width: 25%;
+        width: 55%;
         height: 100%;
         layout: vertical;
-        border: solid $primary-darken-2;
+        border: solid $panel-border-color;
     }
     
-    #left_panel FileTreeWidget {
-        height: 60%;
-    }
-    
-    #left_panel TabbedContent {
-        height: 40%;
-    }
-    
-    #left_panel TabbedContent > TabPane {
-        padding: 0;
-    }
-    
-    #left_panel DataTable {
-        width: 100%;
-        height: 100%;
-        border: none;
-        background: transparent;
-    }
-    
-    #left_panel DataTable:focus {
-        background: $primary-darken-3;
-    }
-    
-    #left_panel .git-header {
-        height: 1;
-        content-align: center middle;
-        background: $primary-darken-2;
-        color: $text;
-        text-style: bold;
-    }
-    
-    /* 中间面板 */
-    #center_panel {
-        width: 50%;
-        height: 100%;
-        layout: vertical;
-        border: solid $primary-darken-2;
-    }
-    
-    #center_panel CodeViewerWidget {
-        height: 50%;
-    }
-    
-    #center_panel ChatPanel {
-        height: 50%;
-    }
-    
-    /* 右侧面板 */
     #right_panel {
-        width: 25%;
+        width: 45%;
         height: 100%;
         layout: vertical;
-        border: solid $primary-darken-2;
+        border: solid $panel-border-color;
     }
     
-    #right_panel ModelSelectorWidget {
-        height: 100%;
+    #status_bar {
+        height: 1;
+        background: $surface-darken-1;
+        color: $text-muted;
+        content-align: left middle;
+        padding: 0 1;
     }
     """
     
     app_config = reactive[AppConfig](AppConfig())
+    settings = reactive[Settings](Settings())
     current_project_path = reactive[str](".")
     is_processing = reactive(False)
     
@@ -111,148 +67,52 @@ class MainScreen(Screen):
         self.project_path = Path(project_path).resolve()
         self.llm_client: Optional[LLMClient] = None
         self.tool_executor = ToolExecutor(str(self.project_path))
+        self.settings = load_settings()
         super().__init__(**kwargs)
     
     def compose(self) -> ComposeResult:
         """组装主界面."""
-        # 左侧：文件树 + Git/终端 Tab
+        # 左侧：AI 交互面板
         with Vertical(id="left_panel"):
-            yield FileTreeWidget(
-                root_path=str(self.project_path),
-                on_select=self._on_file_selected,
-                id="file_tree_panel"
-            )
-            
-            with TabbedContent(id="tools_tabs"):
-                with TabPane("📊 Git 状态", id="git_tab"):
-                    yield self._create_git_panel()
-                
-                with TabPane("💻 终端", id="terminal_tab"):
-                    yield TerminalPanel(
-                        project_path=str(self.project_path),
-                        id="terminal_panel"
-                    )
-        
-        # 中间：代码查看器 + 聊天
-        with Vertical(id="center_panel"):
-            yield CodeViewerWidget(id="code_viewer")
             yield ChatPanel(
                 on_send=self._on_chat_send,
+                on_command=self._on_command,
                 id="chat_panel"
             )
         
-        # 右侧：模型管理
+        # 右侧：代码/Diff 面板
         with Vertical(id="right_panel"):
-            yield ModelSelectorWidget(
-                models=self.app_config.models,
-                on_select=self._on_model_selected,
-                on_add=self._on_model_add,
-                on_edit=self._on_model_edit,
-                on_delete=self._on_model_delete,
-                id="model_panel"
-            )
-    
-    def _create_git_panel(self):
-        """创建 Git 状态面板."""
-        panel = Vertical(id="git_panel_container")
+            yield DiffPanel(id="diff_panel")
         
-        header = Static("📊 Git 状态", classes="git-header")
-        header.styles.height = 1
-        header.styles.content_align = "center middle"
-        header.styles.background = "$primary-darken-2"
-        header.styles.color = "$text"
-        header.styles.text_style = "bold"
-        
-        table = DataTable(id="git_table", cursor_type="row")
-        table.add_columns("状态", "文件")
-        table.styles.width = "100%"
-        table.styles.height = "1fr"
-        table.styles.border = "none"
-        table.styles.background = "transparent"
-        
-        panel.mount(header)
-        panel.mount(table)
-        
-        return panel
+        # 底部状态栏
+        yield Static("Hakimi Codex v0.1.0 | /help for commands", id="status_bar")
     
     def on_mount(self):
         """挂载后初始化."""
-        from ..core.config import load_config
         self.app_config = load_config()
         
-        # 更新模型面板
-        model_panel = self.query_one("#model_panel", ModelSelectorWidget)
-        model_panel.update_models(self.app_config.models)
-        
-        # 刷新 Git 状态
-        self._refresh_git_status()
-        
-        # 显示欢迎信息和项目分析
+        # 显示项目信息
         chat = self.query_one("#chat_panel", ChatPanel)
-        chat.add_system_message(f"📂 项目路径: {self.project_path}")
+        chat.add_system_message(f"Project: {self.project_path.name}")
+        chat.add_system_message(f"Path: {self.project_path}")
         
         # 自动分析项目
-        try:
-            from ..core.project_analyzer import ProjectAnalyzer
-            analyzer = ProjectAnalyzer(str(self.project_path))
-            summary = analyzer.get_summary()
-            chat.add_system_message(f"📊 项目分析:\n{summary}")
-        except Exception:
-            pass
+        if self.settings.ai.auto_analyze:
+            try:
+                from ..core.project_analyzer import ProjectAnalyzer
+                analyzer = ProjectAnalyzer(str(self.project_path))
+                summary = analyzer.get_summary()
+                chat.add_system_message(summary)
+            except Exception:
+                pass
         
         active_model = get_active_model(self.app_config)
         if active_model:
-            chat.add_system_message(f"🤖 当前模型: {active_model.name}")
+            chat.add_system_message(f"Model: {active_model.name}")
         else:
-            chat.add_system_message("⚠️ 请先配置并选择一个模型")
+            chat.add_system_message("No model selected. Use /model to configure.")
         
-        chat.add_system_message(
-            "💡 快捷键: [bold]q[/bold]退出 [bold]r[/bold]刷新 [bold]Ctrl+T[/bold]终端\n"
-            "   AI 支持工具: 执行命令、读写文件、代码搜索、项目分析、代码执行"
-        )
-    
-    def _on_file_selected(self, file_path: str):
-        """文件选择回调."""
-        viewer = self.query_one("#code_viewer", CodeViewerWidget)
-        viewer.current_file = file_path
-    
-    def _on_model_selected(self, model: ModelConfig):
-        """模型选择回调."""
-        from ..core.config import set_active_model
-        set_active_model(self.app_config, model.id)
-        
-        chat = self.query_one("#chat_panel", ChatPanel)
-        chat.add_system_message(f"✅ 已切换到模型: {model.name}")
-        
-        self.llm_client = LLMClient(model)
-    
-    def _on_model_add(self):
-        """添加模型回调."""
-        self.push_screen(ModelEditDialog(), self._on_model_saved)
-    
-    def _on_model_edit(self, model: ModelConfig):
-        """编辑模型回调."""
-        self.push_screen(ModelEditDialog(model=model), self._on_model_saved)
-    
-    def _on_model_delete(self, model: ModelConfig):
-        """删除模型回调."""
-        if remove_model(self.app_config, model.id):
-            model_panel = self.query_one("#model_panel", ModelSelectorWidget)
-            model_panel.update_models(self.app_config.models)
-            
-            chat = self.query_one("#chat_panel", ChatPanel)
-            chat.add_system_message(f"🗑️ 已删除模型: {model.name}")
-    
-    def _on_model_saved(self, result: Optional[ModelConfig]):
-        """模型保存回调."""
-        if result:
-            add_model(self.app_config, result)
-            
-            model_panel = self.query_one("#model_panel", ModelSelectorWidget)
-            model_panel.update_models(self.app_config.models)
-            
-            chat = self.query_one("#chat_panel", ChatPanel)
-            chat.add_system_message(f"💾 已保存模型: {result.name}")
+        chat.add_system_message("Commands: /help /setting /model /file /diff /clear /run /exit")
     
     def _on_chat_send(self, content: str):
         """聊天发送回调."""
@@ -260,16 +120,313 @@ class MainScreen(Screen):
         
         if not active_model:
             chat = self.query_one("#chat_panel", ChatPanel)
-            chat.add_system_message("⚠️ 请先选择一个模型！")
+            chat.add_system_message("No model selected. Use /model to configure.")
             return
         
         if not active_model.api_key:
             chat = self.query_one("#chat_panel", ChatPanel)
-            chat.add_system_message("⚠️ 请为当前模型配置 API Key！")
+            chat.add_system_message("No API key configured. Use /model to edit.")
             return
         
-        # 启动后台任务处理消息
         self.run_worker(self._process_chat_message(content))
+    
+    def _on_command(self, action: str, data: Optional[Dict]):
+        """指令回调."""
+        if action == "show_settings":
+            self._show_settings()
+        elif action == "set_setting":
+            self._update_setting(data)
+        elif action == "get_setting":
+            self._show_setting(data)
+        elif action == "model_list":
+            self._show_models()
+        elif action == "model_select":
+            self._select_model(data)
+        elif action == "model_add":
+            self._on_model_add()
+        elif action == "model_edit":
+            self._on_model_edit(data)
+        elif action == "model_delete":
+            self._on_model_delete(data)
+        elif action == "add_file":
+            self._add_file_to_context(data)
+        elif action == "show_diff":
+            self._show_diff(data)
+        elif action == "clear_chat":
+            chat = self.query_one("#chat_panel", ChatPanel)
+            chat.clear_chat()
+        elif action == "undo":
+            self._undo_last_change()
+        elif action == "git_commit":
+            self._git_commit(data)
+        elif action == "show_status":
+            self._show_status()
+        elif action == "run_command":
+            self._run_command(data)
+        elif action == "exit":
+            self._exit()
+    
+    def _show_settings(self):
+        """显示当前设置."""
+        chat = self.query_one("#chat_panel", ChatPanel)
+        lines = [
+            "Settings:",
+            "-" * 40,
+        ]
+        
+        ui = self.settings.ui
+        ai = self.settings.ai
+        editor = self.settings.editor
+        git = self.settings.git
+        
+        lines.extend([
+            f"  stream:          {ai.stream}",
+            f"  think_mode:      {ai.think_mode}",
+            f"  think_fold:      {ai.think_fold}",
+            f"  think_lines:     {ai.think_lines}",
+            f"  temperature:     {ai.temperature}",
+            f"  font_size:       {ui.font_size}",
+            f"  theme:           {ui.theme}",
+            f"  show_tool_results: {ai.show_tool_results}",
+            f"  auto_analyze:    {ai.auto_analyze}",
+            f"  auto_commit:     {git.auto_commit}",
+            f"  tab_size:        {editor.tab_size}",
+            f"  word_wrap:       {editor.word_wrap}",
+        ])
+        
+        lines.append("")
+        lines.append("Usage: /setting key=value")
+        lines.append("Example: /setting temperature=0.5")
+        
+        chat.add_system_message("\n".join(lines))
+    
+    def _update_setting(self, data: Optional[Dict]):
+        """更新设置."""
+        if not data:
+            return
+        
+        key = data.get("key")
+        value = data.get("value")
+        
+        if key and value is not None:
+            # 更新对应设置
+            if key == "stream":
+                self.settings.ai.stream = value
+            elif key == "think_mode":
+                self.settings.ai.think_mode = value
+            elif key == "think_fold":
+                self.settings.ai.think_fold = value
+            elif key == "think_lines":
+                self.settings.ai.think_lines = value
+            elif key == "temperature":
+                self.settings.ai.temperature = value
+            elif key == "font_size":
+                self.settings.ui.font_size = value
+            elif key == "theme":
+                self.settings.ui.theme = value
+            elif key == "show_tool_results":
+                self.settings.ai.show_tool_results = value
+            elif key == "auto_analyze":
+                self.settings.ai.auto_analyze = value
+            
+            save_settings(self.settings)
+            
+            # 更新 UI
+            chat = self.query_one("#chat_panel", ChatPanel)
+            chat.update_settings(self.settings)
+            chat.add_system_message(f"Setting updated: {key} = {value}")
+    
+    def _show_setting(self, data: Optional[Dict]):
+        """显示单个设置."""
+        if not data:
+            return
+        
+        key = data.get("key")
+        chat = self.query_one("#chat_panel", ChatPanel)
+        
+        # 获取当前值
+        value = None
+        if key == "stream":
+            value = self.settings.ai.stream
+        elif key == "think_mode":
+            value = self.settings.ai.think_mode
+        elif key == "temperature":
+            value = self.settings.ai.temperature
+        
+        if value is not None:
+            chat.add_system_message(f"{key} = {value}")
+    
+    def _show_models(self):
+        """显示模型列表."""
+        chat = self.query_one("#chat_panel", ChatPanel)
+        lines = ["Models:", "-" * 40]
+        
+        for m in self.app_config.models:
+            active = "* " if m.id == self.app_config.active_model_id else "  "
+            status = "[enabled]" if m.enabled else "[disabled]"
+            lines.append(f"  {active}{m.name:<20} {m.provider:<12} {status}")
+        
+        lines.append("")
+        lines.append("Use /model select <id> to activate")
+        
+        chat.add_system_message("\n".join(lines))
+    
+    def _select_model(self, data: Optional[Dict]):
+        """选择模型."""
+        if not data:
+            return
+        
+        model_id = data.get("id")
+        if set_active_model(self.app_config, model_id):
+            chat = self.query_one("#chat_panel", ChatPanel)
+            active = get_active_model(self.app_config)
+            if active:
+                chat.add_system_message(f"Model activated: {active.name}")
+                self.llm_client = LLMClient(active)
+        else:
+            chat = self.query_one("#chat_panel", ChatPanel)
+            chat.add_system_message(f"Model not found: {model_id}")
+    
+    def _on_model_add(self):
+        """添加模型."""
+        self.push_screen(ModelEditDialog(), self._on_model_saved)
+    
+    def _on_model_edit(self, data: Optional[Dict]):
+        """编辑模型."""
+        if not data:
+            return
+        
+        model_id = data.get("id")
+        for model in self.app_config.models:
+            if model.id == model_id:
+                self.push_screen(ModelEditDialog(model=model), self._on_model_saved)
+                return
+    
+    def _on_model_delete(self, data: Optional[Dict]):
+        """删除模型."""
+        if not data:
+            return
+        
+        model_id = data.get("id")
+        if remove_model(self.app_config, model_id):
+            chat = self.query_one("#chat_panel", ChatPanel)
+            chat.add_system_message(f"Model removed: {model_id}")
+    
+    def _on_model_saved(self, result: Optional[ModelConfig]):
+        """模型保存回调."""
+        if result:
+            add_model(self.app_config, result)
+            chat = self.query_one("#chat_panel", ChatPanel)
+            chat.add_system_message(f"Model saved: {result.name}")
+    
+    def _add_file_to_context(self, data: Optional[Dict]):
+        """添加文件到上下文."""
+        if not data:
+            return
+        
+        file_path = data.get("path")
+        # 读取文件并在右侧显示
+        result = self.tool_executor.read_file(file_path)
+        
+        if result.status == ToolResultStatus.SUCCESS:
+            diff_panel = self.query_one("#diff_panel", DiffPanel)
+            diff_panel.show_file(file_path, result.output)
+            
+            chat = self.query_one("#chat_panel", ChatPanel)
+            chat.add_system_message(f"File loaded: {file_path}")
+        else:
+            chat = self.query_one("#chat_panel", ChatPanel)
+            chat.add_system_message(f"Failed to load: {result.output}")
+    
+    def _show_diff(self, data: Optional[Dict]):
+        """显示 diff."""
+        file_path = data.get("file") if data else None
+        
+        if not file_path:
+            # 显示当前文件的 diff
+            diff_panel = self.query_one("#diff_panel", DiffPanel)
+            if diff_panel.current_file and diff_panel.modified_content:
+                diff_panel.show_diff(
+                    diff_panel.current_file,
+                    diff_panel.original_content,
+                    diff_panel.modified_content
+                )
+            else:
+                chat = self.query_one("#chat_panel", ChatPanel)
+                chat.add_system_message("No file to diff")
+        else:
+            # 读取文件并显示 diff（需要知道修改后的内容）
+            chat = self.query_one("#chat_panel", ChatPanel)
+            chat.add_system_message(f"Diff: {file_path}")
+    
+    def _undo_last_change(self):
+        """撤销最后一次修改."""
+        chat = self.query_one("#chat_panel", ChatPanel)
+        chat.add_system_message("Undo not yet implemented")
+    
+    def _git_commit(self, data: Optional[Dict]):
+        """Git 提交."""
+        message = data.get("message") if data else "Hakimi update"
+        
+        if git_utils.is_git_repo(str(self.project_path)):
+            # 添加所有更改
+            files = [f for _, f in git_utils.get_git_status(str(self.project_path))]
+            if files:
+                git_utils.git_add(str(self.project_path), files)
+                git_utils.git_commit(str(self.project_path), message)
+                chat = self.query_one("#chat_panel", ChatPanel)
+                chat.add_system_message(f"Committed: {message}")
+            else:
+                chat = self.query_one("#chat_panel", ChatPanel)
+                chat.add_system_message("No changes to commit")
+        else:
+            chat = self.query_one("#chat_panel", ChatPanel)
+            chat.add_system_message("Not a git repository")
+    
+    def _show_status(self):
+        """显示状态."""
+        chat = self.query_one("#chat_panel", ChatPanel)
+        lines = ["Status:", "-" * 40]
+        
+        # Git 状态
+        if git_utils.is_git_repo(str(self.project_path)):
+            branch = git_utils.get_git_branch(str(self.project_path))
+            files = git_utils.get_git_status(str(self.project_path))
+            lines.append(f"  Git branch: {branch}")
+            lines.append(f"  Changes: {len(files)}")
+            for status, name in files[:10]:
+                lines.append(f"    [{status}] {name}")
+        else:
+            lines.append("  Git: not initialized")
+        
+        # 模型状态
+        active = get_active_model(self.app_config)
+        if active:
+            lines.append(f"  Model: {active.name}")
+        
+        lines.append(f"  Project: {self.project_path}")
+        
+        chat.add_system_message("\n".join(lines))
+    
+    def _run_command(self, data: Optional[Dict]):
+        """运行命令."""
+        if not data:
+            return
+        
+        command = data.get("command")
+        result = self.tool_executor.execute_command(command)
+        
+        chat = self.query_one("#chat_panel", ChatPanel)
+        if result.status == ToolResultStatus.SUCCESS:
+            chat.add_tool_result(f"run: {command}", result.output)
+        else:
+            chat.add_tool_result(f"run: {command}", f"Error (exit {result.exit_code}):\n{result.output}")
+    
+    def _exit(self):
+        """退出."""
+        if self.llm_client:
+            asyncio.create_task(self.llm_client.close())
+        self.app.exit()
     
     async def _process_chat_message(self, content: str):
         """处理聊天消息."""
@@ -285,220 +442,141 @@ class MainScreen(Screen):
             self.llm_client = LLMClient(active_model)
         
         chat = self.query_one("#chat_panel", ChatPanel)
+        chat.start_streaming()
         
-        # 获取消息历史
         messages = chat.get_messages()
         api_messages = []
         for msg in messages:
-            if msg["role"] in ("user", "assistant"):
-                api_messages.append({"role": msg["role"], "content": msg["content"]})
+            api_messages.append({"role": msg["role"], "content": msg["content"]})
         
-        # 构建系统提示词（包含工具描述）
         system_prompt = self._build_system_prompt()
         
-        # 收集流式响应
         full_response = ""
         
         try:
-            async for chunk in self.llm_client.chat(api_messages, system_prompt=system_prompt):
+            async for chunk in self.llm_client.chat(api_messages, system_prompt=system_prompt, stream=self.settings.ai.stream):
                 if worker.is_cancelled:
                     break
                 full_response += chunk
-                
-                # 每累积一定内容更新显示
-                if len(full_response) % 100 < 10:
-                    self.app.call_from_thread(
-                        self._update_streaming_display,
-                        full_response
-                    )
+                chat.append_stream(chunk)
             
             if not worker.is_cancelled:
-                self.app.call_from_thread(self._finish_response, full_response)
+                chat.finish_streaming()
+                
+                # 检查是否包含工具调用
+                await self._check_tool_calls(full_response)
                 
         except Exception as e:
             self.app.call_from_thread(
                 self._show_error,
-                f"请求失败: {str(e)}"
+                f"Request failed: {str(e)}"
             )
     
     def _build_system_prompt(self) -> str:
-        """构建系统提示词（包含工具描述和项目分析）."""
-        tools_desc = self.tool_executor.get_tools_description()
-        tools_json = "\n".join([
-            f"  - {t['name']}: {t['description'][:60]}..." 
-            for t in tools_desc
-        ])
-        
-        # 获取项目分析上下文
-        project_context = ""
-        try:
-            from ..core.project_analyzer import ProjectAnalyzer
-            analyzer = ProjectAnalyzer(str(self.project_path))
-            project_context = analyzer.get_system_context()
-        except Exception:
-            pass
-        
-        return f"""你是一个专业的代码助手 Agent，正在协助用户在项目 {self.project_path.name} 中进行开发。
+        """构建系统提示词."""
+        return f"""You are Hakimi Codex, a professional coding assistant.
 
-{project_context}
+Project: {self.project_path.name}
+Path: {self.project_path}
 
-当前项目路径: {self.project_path}
+## Available Tools
 
-## 可用工具（8个）
+You can use the following tools by returning JSON format:
 
-你可以使用以下工具来帮助用户（通过返回 JSON 格式调用）：
-
-{tools_json}
-
-## 工具调用格式
-
-当你需要执行工具时，在回复中返回以下 JSON 格式（会被自动执行并返回结果）：
-
-```tool
-{{"tool": "工具名", "parameters": {{"参数": "值"}}}}
-```
-
-例如：
 ```tool
 {{"tool": "execute_command", "parameters": {{"command": "python -m pytest"}}}}
 ```
 
-## Agent 工作模式
+```tool
+{{"tool": "read_file", "parameters": {{"file_path": "src/main.py"}}}}
+```
 
-1. **分析阶段**: 先使用 analyze_project 了解项目概况
-2. **计划阶段**: 根据用户请求制定执行计划
-3. **执行阶段**: 按需调用工具完成代码读写、命令执行、搜索等
-4. **验证阶段**: 运行测试或检查确认修改正确
+```tool
+{{"tool": "write_file", "parameters": {{"file_path": "src/main.py", "content": "..."}}}}
+```
 
-## 规则
+```tool
+{{"tool": "list_directory", "parameters": {{"dir_path": "."}}}}
+```
 
-1. 用中文回答，代码注释可以用英文
-2. 回答简洁、专业，优先给出可执行方案
-3. 需要执行命令时，先说明计划，然后使用工具
-4. 读取文件后，分析内容并给出具体修改建议
-5. 写文件前，建议先用 diff 预览变更（如用户要求）
-6. 修改后主动运行测试验证
-7. 对于复杂任务，分步骤执行并汇报进度"""
+```tool
+{{"tool": "search_files", "parameters": {{"pattern": "def main"}}}}
+```
+
+```tool
+{{"tool": "execute_code", "parameters": {{"code": "print(1+1)"}}}}
+```
+
+```tool
+{{"tool": "analyze_project", "parameters": {{}}}}
+```
+
+## Rules
+
+1. Use Chinese for responses, English for code comments
+2. Be concise and professional
+3. When modifying code, show the full file content in write_file
+4. Run tests after making changes to verify correctness
+5. For complex tasks, plan and execute step by step
+"""
     
-    def _update_streaming_display(self, content: str):
-        """更新流式显示."""
-        pass
-    
-    def _finish_response(self, content: str):
-        """完成响应显示."""
-        # 检查是否包含工具调用
+    async def _check_tool_calls(self, content: str):
+        """检查并执行工具调用."""
         import re
         import json
         
-        # 提取工具调用
-        tool_pattern = r'```tool\s*\n(.*?)\n```'
-        tool_matches = list(re.finditer(tool_pattern, content, re.DOTALL))
+        pattern = r'```tool\s*\n(.*?)\n```'
+        matches = list(re.finditer(pattern, content, re.DOTALL))
         
-        if tool_matches:
-            # 有工具调用，分离消息和工具调用
-            # 先显示 AI 的普通回复部分
-            clean_content = re.sub(tool_pattern, '', content, flags=re.DOTALL).strip()
-            if clean_content:
-                chat = self.query_one("#chat_panel", ChatPanel)
-                chat.add_ai_message(clean_content)
-            
-            # 执行每个工具调用
-            for match in tool_matches:
-                try:
-                    tool_call = json.loads(match.group(1).strip())
-                    self._execute_tool_call(tool_call)
-                except json.JSONDecodeError as e:
-                    chat = self.query_one("#chat_panel", ChatPanel)
-                    chat.add_system_message(f"⚠️ 工具调用格式错误: {e}")
-        else:
-            # 没有工具调用，直接显示
-            chat = self.query_one("#chat_panel", ChatPanel)
-            chat.add_ai_message(content)
-    
-    def _execute_tool_call(self, tool_call: dict):
-        """执行工具调用."""
-        tool_name = tool_call.get("tool", "")
-        parameters = tool_call.get("parameters", {})
+        if not matches:
+            return
         
         chat = self.query_one("#chat_panel", ChatPanel)
-        chat.add_system_message(
-            f"🔧 执行工具: [bold]{tool_name}[/bold]\n"
-            f"参数: {parameters}"
-        )
         
-        result = self.tool_executor.execute_tool(tool_name, parameters)
-        
-        # 显示工具结果
-        if result.status == ToolResultStatus.SUCCESS:
-            chat.add_system_message(f"✅ 工具执行成功\n{result.output[:500]}")
-        else:
-            chat.add_system_message(f"❌ 工具执行失败\n{result.output}")
-        
-        # 如果终端面板可见，也在终端中显示
-        terminal = self.query_one("#terminal_panel", TerminalPanel)
-        if terminal and hasattr(terminal, 'query_one'):
-            log = terminal.query_one("#terminal_log", RichLog)
-            if log:
-                log.write(f"\n[dim]➡️ AI 工具: {tool_name}[/dim]")
-                log.write(f"[dim]   参数: {parameters}[/dim]")
-                log.write(f"[dim]   结果: {result.status.value}[/dim]")
+        for match in matches:
+            try:
+                tool_call = json.loads(match.group(1).strip())
+                tool_name = tool_call.get("tool")
+                parameters = tool_call.get("parameters", {})
+                
+                chat.add_system_message(f"Tool: {tool_name}")
+                
+                result = self.tool_executor.execute_tool(tool_name, parameters)
+                
+                if result.status == ToolResultStatus.SUCCESS:
+                    chat.add_tool_result(tool_name, result.output)
+                else:
+                    chat.add_tool_result(tool_name, f"Error: {result.output}")
+                
+                # 如果工具修改了文件，更新 diff 面板
+                if tool_name == "write_file" and "file_path" in parameters:
+                    file_path = parameters["file_path"]
+                    original = self.tool_executor.read_file(file_path).output
+                    modified = parameters.get("content", "")
+                    
+                    diff_panel = self.query_one("#diff_panel", DiffPanel)
+                    diff_panel.show_diff(file_path, original, modified)
+                
+            except json.JSONDecodeError as e:
+                chat.add_system_message(f"Tool parse error: {e}")
     
     def _show_error(self, message: str):
         """显示错误."""
         chat = self.query_one("#chat_panel", ChatPanel)
-        chat.add_system_message(f"❌ {message}")
-    
-    def _refresh_git_status(self):
-        """刷新 Git 状态."""
-        if not git_utils.is_git_repo(str(self.project_path)):
-            return
-        
-        try:
-            table = self.query_one("#git_table", DataTable)
-            table.clear()
-            
-            status_map = {
-                "M": ("📝", "修改"),
-                "A": ("➕", "新增"),
-                "D": ("🗑️", "删除"),
-                "??": ("❓", "未跟踪"),
-                "R": ("📝", "重命名"),
-            }
-            
-            files = git_utils.get_git_status(str(self.project_path))
-            for status, filename in files:
-                icon, label = status_map.get(status, ("📄", status))
-                table.add_row(f"{icon} {label}", filename)
-            
-            if not files:
-                table.add_row("✅", "工作区干净")
-                
-        except Exception:
-            pass
+        chat.add_system_message(f"Error: {message}")
     
     def action_refresh(self):
-        """刷新操作."""
-        self._refresh_git_status()
-        
-        tree = self.query_one("#file_tree_panel", FileTreeWidget)
-        tree.refresh_tree()
-        
-        self.notify("已刷新", severity="information")
+        """刷新."""
+        self.notify("Refreshed", severity="information")
     
-    def action_toggle_terminal(self):
-        """切换终端面板."""
-        tabs = self.query_one("#tools_tabs", TabbedContent)
-        active = tabs.active
-        if active == "git_tab":
-            tabs.active = "terminal_tab"
-            terminal = self.query_one("#terminal_panel", TerminalPanel)
-            if terminal:
-                terminal.query_one("#terminal_input", Input).focus()
+    def action_toggle_diff(self):
+        """切换 diff 面板."""
+        diff_panel = self.query_one("#diff_panel", DiffPanel)
+        if diff_panel.display:
+            diff_panel.display = False
         else:
-            tabs.active = "git_tab"
+            diff_panel.display = True
     
     def action_quit(self):
-        """退出操作."""
-        if self.llm_client:
-            asyncio.create_task(self.llm_client.close())
-        self.app.exit()
+        """退出."""
+        self._exit()
