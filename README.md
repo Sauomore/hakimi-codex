@@ -1,13 +1,13 @@
 # Hakimi Codex
 
-A modern AI coding assistant CLI tool, inspired by [Aider](https://github.com/paul-gauthier/aider), [OpenAI Codex CLI](https://github.com/openai/codex), and [Kimi CLI](https://www.kimi.com).
+一个现代化的 AI 代码助手 CLI 工具。
 
 ---
 
 ## Features
 
 - Clean TUI Interface - Textual-based terminal UI, no emojis, high contrast
-- Single-window chat layout - messages flow top to bottom like Claude Code
+- Single-window chat layout - messages flow top to bottom
 - Inline diff rendering - red/green line highlighting for code changes
 - Command System - `/` prefix commands for all operations
 - 8 AI Tools - Command execution, file read/write, directory listing, search, code sandbox, project analysis
