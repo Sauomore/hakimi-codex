@@ -25,7 +25,6 @@ from ..core.command_handler import CommandHandler, CommandResult
 
 
 class MainScreen(Screen):
-    """Claude Code 风格主界面."""
     
     CSS = """
     MainScreen {
@@ -106,7 +105,6 @@ class MainScreen(Screen):
         self.app_config = load_config()
         self._update_status_bar()
         
-        # ASCII art header
         self._add_system_message("")
         self._add_system_message("██╗  ██╗ █████╗ ██╗  ██╗██╗███╗   ███╗██╗")
         self._add_system_message("██║  ██║██╔══██╗██║ ██╔╝██║████╗ ████║██║")
@@ -163,8 +161,7 @@ class MainScreen(Screen):
     def _add_ai_message(self, content: str, thinking: Optional[str] = None):
         self.messages.append({"role": "assistant", "content": content, "thinking": thinking})
         log = self.query_one("#messages_log", RichLog)
-        
-        # 显示思考内容
+
         if thinking and self.settings.ai.think_mode:
             think_lines = thinking.strip().split("\n")
             if self.settings.ai.think_fold:
@@ -206,10 +203,8 @@ class MainScreen(Screen):
         char_count = len(result)
         
         if self.settings.ai.tool_results_fold:
-            # 折叠模式：只显示一行摘要
             log.write(f"[bold #58a6ff][{tool_name}][/bold #58a6ff] [#888888]({line_count} lines, {char_count} chars) [use /setting tool_results_fold=false to expand][/#888888]")
         else:
-            # 展开模式：显示完整内容
             log.write(f"[bold #58a6ff][{tool_name}][/bold #58a6ff]")
             display = result[:2000] + "\n... (output truncated)" if len(result) > 2000 else result
             for line in display.split("\n"):
@@ -469,84 +464,93 @@ class MainScreen(Screen):
             self._add_tool_result(f"$ {command}", result.output)
         else:
             self._add_tool_result(f"$ {command} (exit {result.exit_code})", result.output)
-    
+
     def _exit(self):
         if self.llm_client:
             asyncio.create_task(self.llm_client.close())
         self.app.exit()
-    
+
     async def _process_chat_message(self, content: str):
         worker = get_current_worker()
         active_model = get_active_model(self.app_config)
         if not active_model:
             return
-        
+
         if not self.llm_client or self.llm_client.model.id != active_model.id:
             if self.llm_client:
                 await self.llm_client.close()
             self.llm_client = LLMClient(active_model)
-        
+
         self.is_processing = True
         self._update_status_bar()
-        
+
         try:
             max_rounds = 10
             for round_num in range(max_rounds):
                 api_messages = [m for m in self.messages if m["role"] in ("user", "assistant")]
                 system_prompt = self._build_system_prompt()
                 full_response = ""
-                
+                thinking_content = ""
+
+                log = self.query_one("#messages_log", RichLog)
+                log.write("")
+
                 async for chunk in self.llm_client.chat(api_messages, system_prompt=system_prompt, stream=self.settings.ai.stream):
                     if worker.is_cancelled:
                         break
                     full_response += chunk
-                
+
                 if worker.is_cancelled:
                     break
-                
+
+                # Extract thinking content
+                while True:
+                    idx = full_response.find("<thinking>")
+                    if idx == -1:
+                        break
+                    end_idx = full_response.find("</thinking>", idx + len("<thinking>"))
+                    if end_idx == -1:
+                        thinking_content += full_response[idx + len("<thinking>"):]
+                        full_response = full_response[:idx]
+                        break
+                    thinking_content += full_response[idx + len("<thinking>"):end_idx]
+                    full_response = full_response[:idx] + full_response[end_idx + len("</thinking>"):]
+
                 tool_results = await self._execute_tool_calls(full_response)
-                
+
                 if not tool_results:
-                    # 没有工具调用 -> 可能是最终回答，检查是否是过渡性回复
                     text_only = re.sub(r'```tool\s*\n.*?\n```', '', full_response, flags=re.DOTALL).strip()
                     if self._is_transitional_response(text_only) and round_num < max_rounds - 1:
-                        # 过渡性回复：保存为 assistant 消息，追加催促提示，继续循环
                         self.messages.append({"role": "assistant", "content": full_response})
                         self._add_system_message(f"[#888888]> {text_only}[/#888888]")
                         self.messages.append({
                             "role": "user",
                             "content": "Please provide the complete analysis or answer based on the data already provided. Do not use transitional phrases."
                         })
-                        continue  # 继续下一轮，让 AI 给出真正的分析
-                    
-                    # 真正的最终回答
-                    self._add_ai_message(full_response)
+                        continue
+
+                    self._add_ai_message(full_response, thinking_content if thinking_content else None)
                     break
                 else:
-                    # 中间轮次：保存 assistant 消息
                     self.messages.append({"role": "assistant", "content": full_response})
-                    
-                    # 显示AI的中间回复文本（去除工具块）
                     text_only = re.sub(r'```tool\s*\n.*?\n```', '', full_response, flags=re.DOTALL).strip()
                     if text_only:
                         self._add_system_message(f"[#888888]> {text_only}[/#888888]")
-                    
-                    # 添加工具结果到消息历史，作为 user 消息让AI继续思考
                     for tr in tool_results:
                         self.messages.append({
                             "role": "user",
                             "content": f"[Tool '{tr['tool_name']}' result]\n```\n{tr['output']}\n```"
                         })
-            
+
             if round_num >= max_rounds - 1:
                 self._add_system_message("[bold yellow]Max tool rounds reached (10). Stopping.[/bold yellow]")
-                
+
         except Exception as e:
             self._add_system_message(f"[bold red]Error: {str(e)}[/bold red]")
         finally:
             self.is_processing = False
             self._update_status_bar()
-    
+
     def _build_system_prompt(self) -> str:
         return f"""You are Hakimi Codex, a professional coding assistant.
 
@@ -593,18 +597,12 @@ If the data is sufficient, provide the full analysis right away. If you genuinel
 """
     
     def _is_transitional_response(self, text: str) -> bool:
-        """检测回复是否是过渡性的（拿到工具结果后只说了"让我看看"之类的）.
-        
-        Returns True if the response looks transitional and needs another round.
-        """
         if not text or len(text) < 10:
-            return False  # 空或极短文本，直接当作最终回答
+            return False
         
         text_lower = text.lower()
-        
-        # 过渡性关键词（中英文）
+
         transitional_keywords = [
-            # 中文
             "让我看看", "让我确认", "让我检查", "让我确认一下", "让我检查下",
             "我来确认", "我来检查", "我来确认一下", "我来检查下",
             "需要确认", "需要确认一下", "需要检查", "需要检查下",
@@ -613,7 +611,6 @@ If the data is sufficient, provide the full analysis right away. If you genuinel
             "现在让我", "现在我来", "现在我",
             "先确认", "先检查", "先查看",
             "了解一下", "看一下",
-            # 英文
             "let me check", "let me confirm", "let me verify",
             "let me take a look", "let me see", "let me review",
             "i will check", "i will confirm", "i will verify",
@@ -627,38 +624,31 @@ If the data is sufficient, provide the full analysis right away. If you genuinel
             "looking into", "going to check", "going to confirm",
             "let me review", "i will review", "need to review",
         ]
-        
-        # 检查是否包含过渡性关键词
+
         has_transitional = any(kw in text_lower for kw in transitional_keywords)
         
         if not has_transitional:
             return False
-        
-        # 如果文本很短（< 150 字符）且包含过渡性关键词，直接判定为过渡性
+
         if len(text) < 150:
             return True
-        
-        # 中等长度文本（150-300 字符）：如果包含过渡性关键词，但没有实质性分析内容
+
         if len(text) <= 300:
-            # 检查是否有实质性分析内容
             has_analysis = any(kw in text_lower for kw in [
                 "分析", "总结", "结论", "建议", "方案", "实现",
                 "修改", "优化", "问题", "原因", "方法", "步骤", "结果",
                 "analysis", "summary", "conclusion", "recommendation",
                 "solution", "implementation", "issue", "cause", "result",
             ])
-            # 包含代码块或 diff 块也说明是实质性内容
             has_code_blocks = "```" in text or "diff" in text_lower
             
             if has_analysis or has_code_blocks:
                 return False
             return True
-        
-        # 长文本（> 300 字符），即使有过渡性关键词，也认为是实质性回复
+
         return False
 
     async def _execute_tool_calls(self, content: str) -> List[Dict[str, str]]:
-        """检测并执行工具调用，返回工具结果列表."""
         matches = list(re.finditer(r'```tool\s*\n(.*?)\n```', content, re.DOTALL))
         if not matches:
             return []

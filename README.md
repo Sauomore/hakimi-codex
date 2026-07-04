@@ -16,6 +16,12 @@
 
 ---
 
+## Known Issues
+
+- **Streaming output**: Currently has display issues (double rendering, Markdown parsing inconsistency). A fix is planned for the next update. Disable streaming with `/setting stream=false` for stable output.
+
+---
+
 ## Quick Start
 
 ```bash
