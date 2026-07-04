@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: hakimi-cli
-Version: 0.1.0
+Version: 0.2.0
 Summary: 现代化 AI 代码助手 CLI 工具
 Author: Hakimi Team
 License: MIT
@@ -26,129 +26,143 @@ Requires-Dist: pydantic>=2.0.0
 Requires-Dist: aiohttp>=3.9.0
 Dynamic: requires-python
 
-# Hakimi - 现代化 AI 代码助手 CLI
+# Hakimi Codex
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.9+-blue.svg" alt="Python 3.9+">
-  <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT License">
-  <img src="https://img.shields.io/badge/UI-Textual-orange.svg" alt="Textual UI">
-</p>
+A modern AI coding assistant CLI tool, inspired by [Aider](https://github.com/paul-gauthier/aider), [OpenAI Codex CLI](https://github.com/openai/codex), and [Kimi CLI](https://www.kimi.com).
 
-**Hakimi** 是一个类似 [Aider](https://github.com/paul-gauthier/aider) 的现代化 AI 代码助手 CLI 工具，拥有精美的 TUI（终端用户界面）和流畅的交互体验。
+---
 
-## ✨ 特性
+## Features
 
-- 🎨 **精美的 TUI 界面** - 基于 Textual 框架，支持主题和响应式布局
-- 🤖 **多模型支持** - OpenAI、Claude、DeepSeek、Gemini、Mistral、Ollama 等
-- 📁 **文件浏览器** - 内置可交互文件树，支持语法高亮
-- 💬 **流式聊天** - 实时 AI 响应，支持 Markdown 和代码块
-- 🔧 **模型管理** - 可视化添加、编辑、切换模型配置
-- 📊 **Git 集成** - 实时显示 Git 状态和文件变更
-- 🌐 **多语言支持** - 中文界面，响应内容可配置
+- **Clean TUI Interface** - Textual-based terminal UI, no emojis, professional styling
+- **Dual Panel Layout** - Left: AI chat interaction, Right: code/diff view
+- **Diff Visualization** - Red/green line highlighting for code changes (like Continue extension)
+- **Thinking Fold** - AI reasoning content collapsed by default, expandable with 2-line preview
+- **Command System** - `/` prefix commands: `/help`, `/setting`, `/model`, `/diff`, `/run`, etc.
+- **8 AI Tools** - Command execution, file read/write, directory listing, search, code sandbox, project analysis, web search
+- **Multi-Model** - OpenAI, Claude, DeepSeek, Gemini, Mistral, Ollama, custom APIs
+- **Settings Management** - Stream output, thinking mode, temperature, font size, colors, themes
 
-## 🚀 安装
+---
+
+## Quick Start
 
 ```bash
-# 进入项目目录
-cd I:\codex
-
-# 安装依赖
+# Install
 pip install -r requirements.txt
-
-# 安装为命令
 pip install -e .
-```
 
-Windows 用户也可以直接运行 `install.bat` 一键安装。
-
-## 📝 使用
-
-```bash
-# 在当前目录启动
+# Launch
 hakimi
 
-# 在指定项目目录启动
-hakimi D:\你的项目路径
-
-# 查看版本
-hakimi --version
+# Or specify project directory
+hakimi /path/to/project
 ```
 
-如果 `hakimi` 命令不在 PATH 中，可以使用：
+---
 
-```bash
-# 方式1：Python 模块方式
-py -m codex
-
-# 方式2：使用项目自带的批处理
-I:\codex\hakimi.bat
-```
-
-## ⌨️ 快捷键
-
-| 快捷键 | 功能 |
-|--------|------|
-| `q` | 退出应用 |
-| `r` | 刷新文件树和 Git 状态 |
-| `m` | 模型管理 |
-| `c` | 聚焦聊天输入 |
-| `f` | 聚焦文件树 |
-| `Ctrl+S` | 保存当前文件 |
-
-## ⚙️ 配置
-
-配置文件位于 `~/.config/codex/config.toml`：
-
-```toml
-version = "0.1.0"
-active_model_id = "gpt-4o"
-
-[[models]]
-id = "gpt-4o"
-name = "GPT-4o"
-provider = "openai"
-model_id = "gpt-4o"
-api_key = "sk-..."
-temperature = 0.7
-max_tokens = 4096
-context_window = 128000
-enabled = true
-is_default = true
-```
-
-首次运行会自动创建默认配置，包含 8 个预设模型。
-
-## 🏗️ 项目结构
+## Layout
 
 ```
-I:\codex\
-├── codex\                 # Python 包
-│   ├── core\              # 核心模块
-│   │   ├── models.py      # 模型定义
-│   │   ├── config.py      # 配置管理
-│   │   ├── llm_client.py  # LLM API 客户端
-│   │   └── git_utils.py   # Git 工具
-│   ├── widgets\            # UI 组件
-│   │   ├── file_tree.py
-│   │   ├── chat_panel.py
-│   │   ├── model_selector.py
-│   │   └── code_view.py
-│   ├── screens\            # 界面
-│   │   ├── splash_screen.py
-│   │   ├── main_screen.py
-│   │   └── model_edit_dialog.py
-│   ├── styles\             # 样式
-│   │   └── codex.tcss
-│   ├── app.py              # 主应用
-│   └── __main__.py         # CLI 入口
-├── hakimi.bat              # Windows 启动脚本
-├── install.bat             # Windows 安装脚本
-├── setup.py
-├── pyproject.toml
++----------------------------+------------------------+
+|  AI Interaction (55%)      |  Code/Diff (45%)       |
+|  - User messages            |  - Current file view   |
+|  - AI responses             |  - Red/green diff      |
+|  - Thinking (collapsible)  |                        |
+|  - Tool results            |                        |
++----------------------------+------------------------+
+|  > Input (/help, /setting...)                         |
++-------------------------------------------------------+
+```
+
+---
+
+## Commands
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `/help` | Show all commands | `/help` |
+| `/setting` | Show/update settings | `/setting temperature=0.5` |
+| `/model` | Model management | `/model list`, `/model select gpt-4o` |
+| `/file` | Add file to context | `/file src/main.py` |
+| `/diff` | Show file diff | `/diff` |
+| `/clear` | Clear chat history | `/clear` |
+| `/run` | Execute shell command | `/run python -m pytest` |
+| `/status` | Show project status | `/status` |
+| `/commit` | Git commit changes | `/commit "fix: bug"` |
+| `/exit` | Quit application | `/exit` |
+
+---
+
+## Settings
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `stream` | bool | `true` | Stream output |
+| `think_mode` | bool | `true` | Show thinking content |
+| `think_fold` | bool | `true` | Collapse thinking by default |
+| `think_lines` | int | `2` | Lines shown when folded |
+| `temperature` | float | `0.7` | AI temperature |
+| `font_size` | int | `12` | UI font size |
+| `theme` | str | `dark` | UI theme |
+| `show_tool_results` | bool | `true` | Show tool execution results |
+| `auto_analyze` | bool | `true` | Auto analyze project on start |
+
+Usage: `/setting key=value`
+
+---
+
+## Supported Models
+
+| Model | Provider | Context |
+|-------|----------|---------|
+| GPT-4o | OpenAI | 128K |
+| Claude 3.5 Sonnet | Anthropic | 200K |
+| DeepSeek Chat | DeepSeek | 64K |
+| Gemini 1.5 Pro | Google | 1M |
+| Mistral Large | Mistral | 32K |
+| Llama 3 (Ollama) | Local | 8K |
+
+---
+
+## Project Structure
+
+```
+hakimi_codex/
+├── codex/
+│   ├── core/          # Core modules
+│   │   ├── models.py       # Model definitions
+│   │   ├── config.py       # Config persistence
+│   │   ├── llm_client.py   # LLM API client
+│   │   ├── tools.py        # Tool execution engine (8 tools)
+│   │   ├── code_sandbox.py # Python sandbox
+│   │   ├── project_analyzer.py  # Project auto-detection
+│   │   ├── settings_manager.py  # Settings management
+│   │   └── command_handler.py   # Command processor
+│   ├── widgets/       # UI widgets
+│   │   ├── chat_panel.py      # Chat with thinking fold
+│   │   ├── diff_panel.py      # Red/green diff view
+│   │   ├── code_view.py       # Code viewer
+│   │   ├── file_tree.py       # File tree
+│   │   ├── model_selector.py  # Model management
+│   │   └── terminal_panel.py  # Terminal panel
+│   ├── screens/       # Screens
+│   │   ├── main_screen.py     # Main dual-panel layout
+│   │   ├── splash_screen.py   # Launch screen
+│   │   └── model_edit_dialog.py  # Model editor
+│   ├── styles/
+│   │   └── codex.tcss    # Theme styles
+│   ├── app.py         # Main app
+│   └── __main__.py    # CLI entry
+├── hakimi.bat         # Windows launcher
+├── hakimi.sh          # Linux/macOS launcher
 ├── requirements.txt
+├── setup.py
 └── README.md
 ```
 
-## 📄 许可证
+---
+
+## License
 
 MIT License
