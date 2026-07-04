@@ -1,0 +1,139 @@
+/* Hakimi 主题样式 - 通用组件样式 */
+
+Screen {
+    align: center middle;
+    background: $surface-darken-1;
+}
+
+/* 模态框 */
+ModalScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+ModalScreen > Container {
+    width: 80;
+    height: auto;
+    max-height: 40;
+    border: solid $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+ModalScreen > Container > Label {
+    width: 100%;
+    content-align: center middle;
+    text-style: bold;
+    color: $primary-lighten-2;
+    margin-bottom: 1;
+}
+
+ModalScreen > Container > Input {
+    margin: 1 0;
+}
+
+ModalScreen > Container > Button {
+    margin: 1 0;
+}
+
+/* 模型编辑对话框 */
+ModelEditDialog {
+    align: center middle;
+    background: $background 70%;
+}
+
+ModelEditDialog > Container {
+    width: 90;
+    height: auto;
+    border: solid $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+ModelEditDialog Container > Static.title {
+    text-style: bold;
+    text-align: center;
+    color: $primary-lighten-2;
+    height: 1;
+    margin-bottom: 1;
+}
+
+ModelEditDialog Container > Input {
+    margin: 1 0;
+}
+
+ModelEditDialog Container > Select {
+    margin: 1 0;
+}
+
+ModelEditDialog Container > Horizontal {
+    height: auto;
+    margin-top: 1;
+    align: center middle;
+}
+
+ModelEditDialog Container > Horizontal > Button {
+    margin: 0 1;
+}
+
+/* 欢迎画面 */
+SplashScreen {
+    align: center middle;
+    background: $surface-darken-2;
+}
+
+SplashScreen > Container {
+    width: 60;
+    height: auto;
+    border: solid $primary;
+    background: $surface;
+    padding: 2;
+}
+
+SplashScreen Container > Static.logo {
+    text-align: center;
+    text-style: bold;
+    color: $primary-lighten-2;
+    height: 3;
+}
+
+SplashScreen Container > Static.subtitle {
+    text-align: center;
+    color: $text-muted;
+    height: 1;
+    margin-bottom: 1;
+}
+
+SplashScreen Container > Button {
+    margin: 1 0;
+    width: 100%;
+}
+
+/* TabbedContent 样式 */
+TabbedContent {
+    background: $surface-darken-1;
+}
+
+TabbedContent > TabBar {
+    background: $primary-darken-2;
+}
+
+TabbedContent > TabBar > Tab {
+    color: $text-muted;
+}
+
+TabbedContent > TabBar > Tab:hover {
+    color: $text;
+    background: $primary-darken-1;
+}
+
+TabbedContent > TabBar > Tab.active {
+    color: $text;
+    background: $primary;
+    text-style: bold;
+}
+
+TabbedContent > TabPane {
+    background: $surface-darken-1;
+    padding: 0;
+}

@@ -1,0 +1,154 @@
+Metadata-Version: 2.4
+Name: hakimi-cli
+Version: 0.1.0
+Summary: 现代化 AI 代码助手 CLI 工具
+Author: Hakimi Team
+License: MIT
+Project-URL: Homepage, https://github.com/hakimi-team/hakimi-cli
+Project-URL: Repository, https://github.com/hakimi-team/hakimi-cli
+Keywords: ai,cli,code,assistant,llm
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Software Development :: Code Generators
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: textual>=0.52.0
+Requires-Dist: rich>=13.0.0
+Requires-Dist: httpx>=0.27.0
+Requires-Dist: toml>=0.10.2
+Requires-Dist: pydantic>=2.0.0
+Requires-Dist: aiohttp>=3.9.0
+Dynamic: requires-python
+
+# Hakimi - 现代化 AI 代码助手 CLI
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.9+-blue.svg" alt="Python 3.9+">
+  <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT License">
+  <img src="https://img.shields.io/badge/UI-Textual-orange.svg" alt="Textual UI">
+</p>
+
+**Hakimi** 是一个类似 [Aider](https://github.com/paul-gauthier/aider) 的现代化 AI 代码助手 CLI 工具，拥有精美的 TUI（终端用户界面）和流畅的交互体验。
+
+## ✨ 特性
+
+- 🎨 **精美的 TUI 界面** - 基于 Textual 框架，支持主题和响应式布局
+- 🤖 **多模型支持** - OpenAI、Claude、DeepSeek、Gemini、Mistral、Ollama 等
+- 📁 **文件浏览器** - 内置可交互文件树，支持语法高亮
+- 💬 **流式聊天** - 实时 AI 响应，支持 Markdown 和代码块
+- 🔧 **模型管理** - 可视化添加、编辑、切换模型配置
+- 📊 **Git 集成** - 实时显示 Git 状态和文件变更
+- 🌐 **多语言支持** - 中文界面，响应内容可配置
+
+## 🚀 安装
+
+```bash
+# 进入项目目录
+cd I:\codex
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 安装为命令
+pip install -e .
+```
+
+Windows 用户也可以直接运行 `install.bat` 一键安装。
+
+## 📝 使用
+
+```bash
+# 在当前目录启动
+hakimi
+
+# 在指定项目目录启动
+hakimi D:\你的项目路径
+
+# 查看版本
+hakimi --version
+```
+
+如果 `hakimi` 命令不在 PATH 中，可以使用：
+
+```bash
+# 方式1：Python 模块方式
+py -m codex
+
+# 方式2：使用项目自带的批处理
+I:\codex\hakimi.bat
+```
+
+## ⌨️ 快捷键
+
+| 快捷键 | 功能 |
+|--------|------|
+| `q` | 退出应用 |
+| `r` | 刷新文件树和 Git 状态 |
+| `m` | 模型管理 |
+| `c` | 聚焦聊天输入 |
+| `f` | 聚焦文件树 |
+| `Ctrl+S` | 保存当前文件 |
+
+## ⚙️ 配置
+
+配置文件位于 `~/.config/codex/config.toml`：
+
+```toml
+version = "0.1.0"
+active_model_id = "gpt-4o"
+
+[[models]]
+id = "gpt-4o"
+name = "GPT-4o"
+provider = "openai"
+model_id = "gpt-4o"
+api_key = "sk-..."
+temperature = 0.7
+max_tokens = 4096
+context_window = 128000
+enabled = true
+is_default = true
+```
+
+首次运行会自动创建默认配置，包含 8 个预设模型。
+
+## 🏗️ 项目结构
+
+```
+I:\codex\
+├── codex\                 # Python 包
+│   ├── core\              # 核心模块
+│   │   ├── models.py      # 模型定义
+│   │   ├── config.py      # 配置管理
+│   │   ├── llm_client.py  # LLM API 客户端
+│   │   └── git_utils.py   # Git 工具
+│   ├── widgets\            # UI 组件
+│   │   ├── file_tree.py
+│   │   ├── chat_panel.py
+│   │   ├── model_selector.py
+│   │   └── code_view.py
+│   ├── screens\            # 界面
+│   │   ├── splash_screen.py
+│   │   ├── main_screen.py
+│   │   └── model_edit_dialog.py
+│   ├── styles\             # 样式
+│   │   └── codex.tcss
+│   ├── app.py              # 主应用
+│   └── __main__.py         # CLI 入口
+├── hakimi.bat              # Windows 启动脚本
+├── install.bat             # Windows 安装脚本
+├── setup.py
+├── pyproject.toml
+├── requirements.txt
+└── README.md
+```
+
+## 📄 许可证
+
+MIT License

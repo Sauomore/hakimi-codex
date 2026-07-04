@@ -1,0 +1,2 @@
+[console_scripts]
+hakimi = codex.__main__:main
