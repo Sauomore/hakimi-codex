@@ -494,6 +494,8 @@ class MainScreen(Screen):
 
                 log = self.query_one("#messages_log", RichLog)
                 log.write("")
+                log.write("[#888888]Thinking...[/#888888]")
+                
 
                 async for chunk in self.llm_client.chat(api_messages, system_prompt=system_prompt, stream=self.settings.ai.stream):
                     if worker.is_cancelled:

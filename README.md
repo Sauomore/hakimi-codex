@@ -9,6 +9,8 @@
 - Clean TUI Interface - Textual-based terminal UI, no emojis, high contrast
 - Single-window chat layout - messages flow top to bottom
 - Inline diff rendering - red/green line highlighting for code changes
+- File modification preview - shows diff before applying changes
+- "Thinking..." indicator while waiting for AI response
 - Command System - `/` prefix commands for all operations
 - 8 AI Tools - Command execution, file read/write, directory listing, search, code sandbox, project analysis
 - Settings Management - Stream output, thinking mode, temperature, etc.
@@ -154,6 +156,7 @@ If you omit the provider, Hakimi auto-detects from the model ID:
 | `think_lines` | int | `2` | Lines shown when folded |
 | `temperature` | float | `0.7` | AI temperature |
 | `show_tool_results` | bool | `true` | Show tool execution results |
+| `tool_results_fold` | bool | `true` | Collapse tool results by default |
 | `auto_analyze` | bool | `true` | Auto analyze project on start |
 
 ---
