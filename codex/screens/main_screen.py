@@ -652,22 +652,41 @@ If the data is sufficient, provide the full analysis right away. If you genuinel
         matches = list(re.finditer(r'```tool\s*\n(.*?)\n```', content, re.DOTALL))
         if not matches:
             return []
-        
+
         results = []
         for match in matches:
             try:
                 tool_call = json.loads(match.group(1).strip())
                 tool_name = tool_call.get("tool")
                 parameters = tool_call.get("parameters", {})
-                
+
                 self._add_tool_result(
                     f"tool: {tool_name}",
                     f"parameters: {json.dumps(parameters, indent=2, ensure_ascii=False)}"
                 )
-                
+
+                # For write_file, show diff preview before applying
+                if tool_name == "write_file":
+                    file_path = parameters.get("file_path", "")
+                    new_content = parameters.get("content", "")
+                    old_content = ""
+
+                    # Read existing file content if exists
+                    read_result = self.tool_executor.read_file(file_path)
+                    if read_result.status == ToolResultStatus.SUCCESS:
+                        old_content = read_result.output
+
+                    # Show diff preview if file exists and has changes
+                    if old_content and old_content != new_content:
+                        self._add_system_message(f"[bold yellow]Preview changes to {file_path}:[/bold yellow]")
+                        diff = self._generate_diff(old_content, new_content, file_path)
+                        log = self.query_one("#messages_log", RichLog)
+                        self._render_diff(log, diff)
+                        self._add_system_message("[dim]Applying changes...[/dim]")
+
                 result = self.tool_executor.execute_tool(tool_name, parameters)
                 self._add_tool_result(f"result: {tool_name}", result.output)
-                
+
                 results.append({
                     "tool_name": tool_name,
                     "output": result.output,
@@ -675,8 +694,29 @@ If the data is sufficient, provide the full analysis right away. If you genuinel
                 })
             except json.JSONDecodeError as e:
                 self._add_system_message(f"[bold red]Tool parse error: {e}[/bold red]")
-        
+
         return results
+
+    def _generate_diff(self, old_content: str, new_content: str, file_path: str) -> str:
+        """Generate unified diff between old and new content."""
+        import difflib
+        old_lines = old_content.splitlines(keepends=True)
+        new_lines = new_content.splitlines(keepends=True)
+
+        # Ensure lines end with newline for proper diff
+        if old_lines and not old_lines[-1].endswith('\n'):
+            old_lines[-1] += '\n'
+        if new_lines and not new_lines[-1].endswith('\n'):
+            new_lines[-1] += '\n'
+
+        diff = difflib.unified_diff(
+            old_lines,
+            new_lines,
+            fromfile=f"a/{file_path}",
+            tofile=f"b/{file_path}",
+            lineterm=''
+        )
+        return ''.join(diff)
 
     
     def on_input_submitted(self, event: Input.Submitted):
