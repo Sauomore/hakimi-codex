@@ -2,6 +2,7 @@
 
 import json
 import asyncio
+import os
 from typing import AsyncIterator, Optional, Dict, Any, List
 
 import httpx
@@ -9,11 +10,18 @@ import httpx
 from .models import ModelConfig, ProviderType
 
 
+def _debug_log(msg: str) -> None:
+    """调试日志."""
+    if os.environ.get("HAKIMI_DEBUG"):
+        print(f"[HAKIMI_DEBUG] {msg}")
+
+
 class LLMClient:
     """通用 LLM API 客户端."""
     
-    def __init__(self, model: ModelConfig):
+    def __init__(self, model: ModelConfig, think_mode: bool = True):
         self.model = model
+        self.think_mode = think_mode
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(120.0, connect=30.0),
             headers=self._get_headers()
@@ -44,6 +52,7 @@ class LLMClient:
             ProviderType.ANTHROPIC: "https://api.anthropic.com/v1",
             ProviderType.GOOGLE: "https://generativelanguage.googleapis.com/v1beta",
             ProviderType.DEEPSEEK: "https://api.deepseek.com/v1",
+            ProviderType.KIMI: "https://api.moonshot.cn/v1",
             ProviderType.MISTRAL: "https://api.mistral.ai/v1",
             ProviderType.OLLAMA: "http://localhost:11434/v1",
             ProviderType.OPENROUTER: "https://openrouter.ai/api/v1",
@@ -80,21 +89,44 @@ class LLMClient:
         
         url = f"{self._get_base_url()}/chat/completions"
         
+        # Kimi K2.x 系列对采样参数有严格限制，需要特殊处理
+        model_id_lower = self.model.model_id.lower()
+        is_kimi_k2 = (
+            self.model.provider == ProviderType.KIMI
+            and model_id_lower.startswith("kimi-k2")
+        )
+        # K2.7 Code 思考模式强制开启，无法关闭
+        is_kimi_k2_7 = is_kimi_k2 and "k2.7" in model_id_lower
+
         payload = {
             "model": self.model.model_id,
             "messages": messages,
-            "temperature": self.model.temperature,
             "max_tokens": self.model.max_tokens,
             "stream": stream,
         }
-        
-        if system_prompt and messages[0].get("role") != "system":
+
+        if is_kimi_k2:
+            # K2.x 固定采样参数，传其他值会报错；通过 thinking 参数控制思考开关
+            if is_kimi_k2_7:
+                payload["thinking"] = {"type": "enabled"}
+            else:
+                payload["thinking"] = {"type": "enabled" if self.think_mode else "disabled"}
+        else:
+            payload["temperature"] = self.model.temperature
+
+        if system_prompt and messages and messages[0].get("role") != "system":
             payload["messages"] = [{"role": "system", "content": system_prompt}] + messages
-        
+
+        _debug_log(f"POST {url}")
+        _debug_log(f"payload: {json.dumps(payload, ensure_ascii=False)}")
+
         try:
             if stream:
                 async with self.client.stream("POST", url, json=payload) as response:
+                    _debug_log(f"response status: {response.status_code}")
+                    response.raise_for_status()
                     async for line in response.aiter_lines():
+                        _debug_log(f"raw line: {line[:500]}")
                         if line.startswith("data: "):
                             data = line[6:]
                             if data == "[DONE]":
@@ -102,17 +134,30 @@ class LLMClient:
                             try:
                                 chunk = json.loads(data)
                                 delta = chunk.get("choices", [{}])[0].get("delta", {})
+                                reasoning = delta.get("reasoning_content", "")
                                 content = delta.get("content", "")
+                                # 将思考内容包装成标签，便于上层统一提取
+                                if reasoning:
+                                    _debug_log(f"reasoning chunk: {reasoning[:200]}")
+                                    yield f"<thinking>{reasoning}</thinking>"
                                 if content:
+                                    _debug_log(f"content chunk: {content[:200]}")
                                     yield content
                             except json.JSONDecodeError:
                                 continue
             else:
                 response = await self.client.post(url, json=payload)
+                _debug_log(f"response status: {response.status_code}")
                 response.raise_for_status()
                 data = response.json()
-                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                yield content
+                _debug_log(f"response body: {json.dumps(data, ensure_ascii=False)[:1000]}")
+                message = data.get("choices", [{}])[0].get("message", {})
+                reasoning = message.get("reasoning_content", "")
+                content = message.get("content", "")
+                if reasoning:
+                    yield f"<thinking>{reasoning}</thinking>"
+                if content:
+                    yield content
                 
         except httpx.HTTPStatusError as e:
             yield f"\n[错误] API 请求失败: {e.response.status_code} - {e.response.text}"

@@ -225,7 +225,7 @@ class CommandHandler:
             return CommandResult(False, 
                 "用法: /model add <model_id> <api_key> [provider]\n"
                 "或: /model add name=xxx model_id=xxx api_key=xxx provider=xxx\n\n"
-                "提供商: openai, anthropic, deepseek, google, mistral, ollama, openrouter, custom\n"
+                "提供商: openai, anthropic, deepseek, kimi, google, mistral, ollama, openrouter, custom\n"
                 "示例: /model add deepseek-v3 sk-xxx deepseek\n"
                 "       /model add gpt-4o sk-xxx openai\n"
                 "       /model add name=\"DeepSeek\" model_id=deepseek-v3 api_key=sk-xxx provider=deepseek")
@@ -279,6 +279,8 @@ class CommandHandler:
         model_id_lower = model_id.lower()
         if "deepseek" in model_id_lower:
             return "deepseek"
+        elif "kimi" in model_id_lower or "moonshot" in model_id_lower:
+            return "kimi"
         elif "gpt" in model_id_lower or "o1" in model_id_lower or "o3" in model_id_lower:
             return "openai"
         elif "claude" in model_id_lower:

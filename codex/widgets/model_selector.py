@@ -96,6 +96,7 @@ class ModelSelectorWidget(Vertical):
             ProviderType.ANTHROPIC: "[A]",
             ProviderType.GOOGLE: "[G]",
             ProviderType.DEEPSEEK: "[D]",
+            ProviderType.KIMI: "[K]",
             ProviderType.MISTRAL: "[M]",
             ProviderType.OLLAMA: "[L]",
             ProviderType.OPENROUTER: "[R]",

@@ -11,6 +11,7 @@ class ProviderType(str, Enum):
     ANTHROPIC = "anthropic"
     GOOGLE = "google"
     DEEPSEEK = "deepseek"
+    KIMI = "kimi"
     MISTRAL = "mistral"
     OLLAMA = "ollama"
     OPENROUTER = "openrouter"

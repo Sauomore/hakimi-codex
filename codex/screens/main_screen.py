@@ -386,7 +386,7 @@ class MainScreen(Screen):
             active = get_active_model(self.app_config)
             if active:
                 self._add_system_message(f"Model activated: [bold]{active.name}[/bold]")
-                self.llm_client = LLMClient(active)
+                self.llm_client = LLMClient(active, think_mode=self.settings.ai.think_mode)
                 self._update_status_bar()
         else:
             self._add_system_message(f"[bold red]Model not found: {model_id}[/bold red]")
@@ -409,6 +409,8 @@ class MainScreen(Screen):
         api_base = None
         if provider == ProviderType.DEEPSEEK:
             api_base = "https://api.deepseek.com/v1"
+        elif provider == ProviderType.KIMI:
+            api_base = "https://api.moonshot.cn/v1"
         elif provider == ProviderType.OPENAI:
             api_base = None
         elif provider == ProviderType.ANTHROPIC:
@@ -431,10 +433,42 @@ class MainScreen(Screen):
         self._add_system_message(f"[bold green]Model added: {name} ({provider.value})[/bold green]")
         self._add_system_message(f"Use /model select {model_id} to activate")
     
-    def _on_model_delete(self, data: Dict):
+    async def _on_model_delete(self, data: Dict):
         model_id = data.get("id")
+        if not model_id:
+            self._add_system_message("[bold red]Usage: /model delete <id>[/bold red]")
+            return
+
+        # 查找要删除的模型
+        target = next((m for m in self.app_config.models if m.id == model_id), None)
+        if not target:
+            self._add_system_message(f"[bold red]Model not found: {model_id}[/bold red]")
+            return
+
+        # 确认删除
+        confirmed = await self._confirm_action(
+            title="删除模型",
+            content=f"确认删除已保存模型 [bold]{target.name}[/bold] ({target.provider})?",
+            content_type="markdown",
+            confirm_label="删除",
+        )
+        if not confirmed:
+            self._add_system_message("删除已取消")
+            return
+
+        # 执行删除
+        was_active = self.app_config.active_model_id == model_id
         if remove_model(self.app_config, model_id):
-            self._add_system_message(f"[bold yellow]Model removed: {model_id}[/bold yellow]")
+            self._add_system_message(f"[bold yellow]Model removed: {target.name}[/bold yellow]")
+            # 如果删除的是当前激活模型，清理客户端并刷新状态栏
+            if was_active:
+                if self.llm_client:
+                    await self.llm_client.close()
+                    self.llm_client = None
+                self._update_status_bar()
+                self._add_system_message("[bold yellow]当前激活模型已被删除，请使用 /model select 选择新模型[/bold yellow]")
+        else:
+            self._add_system_message(f"[bold red]Failed to remove model: {model_id}[/bold red]")
     
     def _add_file_to_context(self, data: Dict):
         file_path = data.get("path")
@@ -521,7 +555,7 @@ class MainScreen(Screen):
         if not self.llm_client or self.llm_client.model.id != active_model.id:
             if self.llm_client:
                 await self.llm_client.close()
-            self.llm_client = LLMClient(active_model)
+            self.llm_client = LLMClient(active_model, think_mode=self.settings.ai.think_mode)
 
         self.is_processing = True
         self._update_status_bar()
@@ -692,6 +726,27 @@ If the data is sufficient, provide the full analysis right away. If you genuinel
 
         return False
 
+    def _extract_tool_calls_from_block(self, block: str) -> List[Dict]:
+        """从一个 tool 代码块中提取所有有效的 JSON 工具调用."""
+        decoder = json.JSONDecoder()
+        tool_calls = []
+        idx = 0
+        text = block.strip()
+        while idx < len(text):
+            # 跳过非 JSON 起始字符
+            while idx < len(text) and text[idx] not in "{[":
+                idx += 1
+            if idx >= len(text):
+                break
+            try:
+                obj, end = decoder.raw_decode(text, idx)
+                if isinstance(obj, dict) and "tool" in obj:
+                    tool_calls.append(obj)
+                idx = end
+            except json.JSONDecodeError:
+                idx += 1
+        return tool_calls
+
     async def _execute_tool_calls(self, content: str) -> List[Dict[str, str]]:
         matches = list(re.finditer(r'```tool\s*\n(.*?)\n```', content, re.DOTALL))
         if not matches:
@@ -699,8 +754,16 @@ If the data is sufficient, provide the full analysis right away. If you genuinel
 
         results = []
         for match in matches:
-            try:
-                tool_call = json.loads(match.group(1).strip())
+            raw_block = match.group(1).strip()
+            tool_calls = self._extract_tool_calls_from_block(raw_block)
+            if not tool_calls:
+                try:
+                    json.loads(raw_block)
+                except json.JSONDecodeError as e:
+                    self._add_system_message(f"[bold red]Tool parse error: {e}[/bold red]")
+                continue
+
+            for tool_call in tool_calls:
                 tool_name = tool_call.get("tool")
                 parameters = tool_call.get("parameters", {})
 
@@ -802,8 +865,6 @@ If the data is sufficient, provide the full analysis right away. If you genuinel
                     "output": result.output,
                     "status": "success" if result.status == ToolResultStatus.SUCCESS else "error"
                 })
-            except json.JSONDecodeError as e:
-                self._add_system_message(f"[bold red]Tool parse error: {e}[/bold red]")
 
         return results
 

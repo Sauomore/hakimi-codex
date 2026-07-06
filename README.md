@@ -56,6 +56,13 @@ Hakimi does not ship with preset models. You must add your own via the `/model a
 # DeepSeek Flash
 /model add deepseek-flash sk-your-api-key deepseek
 
+# Kimi / Moonshot (K2.x 推荐)
+/model add kimi-k2.6 sk-your-api-key kimi
+/model add kimi-k2.7-code sk-your-api-key kimi
+
+# Kimi / Moonshot (V1 系列)
+/model add moonshot-v1-8k sk-your-api-key kimi
+
 # OpenAI GPT-4o
 /model add gpt-4o sk-your-api-key openai
 
@@ -85,6 +92,8 @@ If you omit the provider, Hakimi auto-detects from the model ID:
 | Keyword in model_id | Provider |
 |---------------------|----------|
 | `deepseek` | deepseek |
+| `kimi`, `moonshot` | kimi |
+| `kimi-k2` | kimi (K2.x 会自动关闭自定义 temperature；K2.6 可通过 /setting think_mode 控制思考，K2.7 Code 思考强制开启) |
 | `gpt`, `o1`, `o3` | openai |
 | `claude` | anthropic |
 | `gemini` | google |
@@ -110,7 +119,7 @@ If you omit the provider, Hakimi auto-detects from the model ID:
 | `/model add <model_id> <api_key> [provider]` | Add a new model | `/model add deepseek-v3 sk-xxx deepseek` |
 | `/model list` | List all added models | `/model list` |
 | `/model select <id>` | Activate a model | `/model select deepseek-v3` |
-| `/model delete <id>` | Remove a model | `/model delete deepseek-v3` |
+| `/model delete <id>` | Remove a saved model (with confirmation) | `/model delete deepseek-v3` |
 
 ### Settings
 
