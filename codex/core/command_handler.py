@@ -45,6 +45,9 @@ class CommandHandler:
         "tool_results_fold": ("工具结果默认折叠", bool, "true/false"),
         "auto_analyze": ("启动时自动分析项目", bool, "true/false"),
         "markdown_render": ("AI 消息 Markdown 渲染", bool, "true/false"),
+        "confirm_tool_execution": ("启用 AI 工具执行确认机制", bool, "true/false"),
+        "confirm_command_execution": ("执行终端命令前确认", bool, "true/false"),
+        "confirm_write_file": ("写入文件前显示 diff 并确认", bool, "true/false"),
     }
     
     def __init__(self):

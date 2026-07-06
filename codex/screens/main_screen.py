@@ -19,9 +19,10 @@ from ..core.models import ModelConfig, ProviderType
 from ..core.config import AppConfig, get_active_model, add_model, remove_model, load_config, set_active_model
 from ..core.llm_client import LLMClient
 from ..core import git_utils
-from ..core.tools import ToolExecutor, ToolResultStatus
+from ..core.tools import ToolExecutor, ToolResultStatus, ToolResult
 from ..core.settings_manager import Settings, load_settings, save_settings
 from ..core.command_handler import CommandHandler, CommandResult
+from .confirmation_dialog import ConfirmationDialog
 
 
 class MainScreen(Screen):
@@ -270,6 +271,23 @@ class MainScreen(Screen):
         log.write("[bold #888888]---[/bold #888888]")
         log.write("")
     
+    async def _confirm_action(
+        self,
+        title: str,
+        content: str,
+        content_type: str = "text",
+        confirm_label: str = "确认"
+    ) -> bool:
+        """显示确认对话框并等待用户确认."""
+        dialog = ConfirmationDialog(
+            title=title,
+            content=content,
+            content_type=content_type,
+            confirm_label=confirm_label,
+            cancel_label="取消",
+        )
+        return await self.app.push_screen_wait(dialog)
+    
     def _on_chat_send(self, content: str):
         active_model = get_active_model(self.app_config)
         if not active_model:
@@ -300,20 +318,25 @@ class MainScreen(Screen):
         }
         handler = handlers.get(action)
         if handler:
-            handler(data) if data else handler()
+            result = handler(data) if data else handler()
+            if asyncio.iscoroutine(result):
+                self.run_worker(result)
     
     def _show_settings(self):
         ai = self.settings.ai
         lines = [
             "Settings:", "-" * 40,
-            f"  stream:          {ai.stream}",
-            f"  think_mode:      {ai.think_mode}",
-            f"  think_fold:      {ai.think_fold}",
-            f"  temperature:     {ai.temperature}",
-            f"  show_tool_results: {ai.show_tool_results}",
-            f"  tool_results_fold: {ai.tool_results_fold}",
-            f"  markdown_render: {ai.markdown_render}",
-            f"  auto_analyze:    {ai.auto_analyze}",
+            f"  stream:                   {ai.stream}",
+            f"  think_mode:               {ai.think_mode}",
+            f"  think_fold:               {ai.think_fold}",
+            f"  temperature:              {ai.temperature}",
+            f"  show_tool_results:        {ai.show_tool_results}",
+            f"  tool_results_fold:        {ai.tool_results_fold}",
+            f"  markdown_render:          {ai.markdown_render}",
+            f"  auto_analyze:             {ai.auto_analyze}",
+            f"  confirm_tool_execution:   {ai.confirm_tool_execution}",
+            f"  confirm_command_execution:{ai.confirm_command_execution}",
+            f"  confirm_write_file:       {ai.confirm_write_file}",
             "", "Usage: /setting key=value",
         ]
         self._add_system_message("\n".join(lines))
@@ -337,6 +360,12 @@ class MainScreen(Screen):
             self.settings.ai.markdown_render = value
         elif key == "auto_analyze":
             self.settings.ai.auto_analyze = value
+        elif key == "confirm_tool_execution":
+            self.settings.ai.confirm_tool_execution = value
+        elif key == "confirm_command_execution":
+            self.settings.ai.confirm_command_execution = value
+        elif key == "confirm_write_file":
+            self.settings.ai.confirm_write_file = value
         save_settings(self.settings)
         self._add_system_message(f"Setting updated: {key} = {value}")
     
@@ -457,8 +486,21 @@ class MainScreen(Screen):
         lines.append(f"  Project: {self.project_path}")
         self._add_system_message("\n".join(lines))
     
-    def _run_command(self, data: Dict):
+    async def _run_command(self, data: Dict):
         command = data.get("command")
+        if (
+            self.settings.ai.confirm_tool_execution
+            and self.settings.ai.confirm_command_execution
+        ):
+            confirmed = await self._confirm_action(
+                title="确认执行终端命令",
+                content=f"$ {command}",
+                content_type="text",
+                confirm_label="确认执行",
+            )
+            if not confirmed:
+                self._add_system_message("[bold yellow]已取消命令执行[/bold yellow]")
+                return
         result = self.tool_executor.execute_command(command)
         if result.status == ToolResultStatus.SUCCESS:
             self._add_tool_result(f"$ {command}", result.output)
@@ -667,24 +709,90 @@ If the data is sufficient, provide the full analysis right away. If you genuinel
                     f"parameters: {json.dumps(parameters, indent=2, ensure_ascii=False)}"
                 )
 
-                # For write_file, show diff preview before applying
+                # 执行命令前确认
+                if tool_name == "execute_command" and self.settings.ai.confirm_tool_execution and self.settings.ai.confirm_command_execution:
+                    command = parameters.get("command", "")
+                    confirmed = await self._confirm_action(
+                        title="确认执行终端命令",
+                        content=f"$ {command}",
+                        content_type="text",
+                        confirm_label="确认执行",
+                    )
+                    if not confirmed:
+                        cancel_result = ToolResult(
+                            status=ToolResultStatus.ERROR,
+                            output="用户已取消执行该命令",
+                            exit_code=1,
+                        )
+                        self._add_tool_result(f"result: {tool_name}", cancel_result.output)
+                        results.append({
+                            "tool_name": tool_name,
+                            "output": cancel_result.output,
+                            "status": "error"
+                        })
+                        continue
+
+                # 写入文件前显示 diff 并确认
                 if tool_name == "write_file":
                     file_path = parameters.get("file_path", "")
                     new_content = parameters.get("content", "")
                     old_content = ""
 
-                    # Read existing file content if exists
+                    # 读取已有文件内容
                     read_result = self.tool_executor.read_file(file_path)
                     if read_result.status == ToolResultStatus.SUCCESS:
                         old_content = read_result.output
 
-                    # Show diff preview if file exists and has changes
+                    # 文件已存在且有变化
                     if old_content and old_content != new_content:
-                        self._add_system_message(f"[bold yellow]Preview changes to {file_path}:[/bold yellow]")
                         diff = self._generate_diff(old_content, new_content, file_path)
-                        log = self.query_one("#messages_log", RichLog)
-                        self._render_diff(log, diff)
-                        self._add_system_message("[dim]Applying changes...[/dim]")
+                        if self.settings.ai.confirm_tool_execution and self.settings.ai.confirm_write_file:
+                            confirmed = await self._confirm_action(
+                                title=f"确认修改文件: {file_path}",
+                                content=diff,
+                                content_type="diff",
+                                confirm_label="确认写入",
+                            )
+                            if not confirmed:
+                                cancel_result = ToolResult(
+                                    status=ToolResultStatus.ERROR,
+                                    output=f"用户已取消写入文件: {file_path}",
+                                    exit_code=1,
+                                )
+                                self._add_tool_result(f"result: {tool_name}", cancel_result.output)
+                                results.append({
+                                    "tool_name": tool_name,
+                                    "output": cancel_result.output,
+                                    "status": "error"
+                                })
+                                continue
+                        else:
+                            # 未启用确认时，仅在聊天日志中展示 diff 预览
+                            self._add_system_message(f"[bold yellow]Preview changes to {file_path}:[/bold yellow]")
+                            log = self.query_one("#messages_log", RichLog)
+                            self._render_diff(log, diff)
+                            self._add_system_message("[dim]Applying changes...[/dim]")
+                    elif not old_content and self.settings.ai.confirm_tool_execution and self.settings.ai.confirm_write_file:
+                        # 新建文件也需要确认
+                        confirmed = await self._confirm_action(
+                            title=f"确认创建新文件: {file_path}",
+                            content=new_content,
+                            content_type="text",
+                            confirm_label="确认创建",
+                        )
+                        if not confirmed:
+                            cancel_result = ToolResult(
+                                status=ToolResultStatus.ERROR,
+                                output=f"用户已取消创建文件: {file_path}",
+                                exit_code=1,
+                            )
+                            self._add_tool_result(f"result: {tool_name}", cancel_result.output)
+                            results.append({
+                                "tool_name": tool_name,
+                                "output": cancel_result.output,
+                                "status": "error"
+                            })
+                            continue
 
                 result = self.tool_executor.execute_tool(tool_name, parameters)
                 self._add_tool_result(f"result: {tool_name}", result.output)

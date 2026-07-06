@@ -107,3 +107,60 @@ ModelEditDialog Container > Horizontal > Button:hover {
 ModelEditDialog Container > Horizontal > Button:focus {
     background: #4da6ff;
 }
+
+ConfirmationDialog {
+    align: center middle;
+    background: #0a0a0a 80%;
+}
+
+ConfirmationDialog > Container {
+    width: 90;
+    height: auto;
+    max-height: 90%;
+    border: solid #333333;
+    background: #141414;
+    padding: 1 2;
+}
+
+ConfirmationDialog Container > Static.title {
+    text-align: center;
+    color: #4da6ff;
+    height: auto;
+    margin-bottom: 1;
+}
+
+ConfirmationDialog Container > Static.message {
+    height: auto;
+    margin-bottom: 1;
+    color: #f0f0f0;
+}
+
+ConfirmationDialog Container > RichLog.content {
+    height: 1fr;
+    min-height: 5;
+    max-height: 30;
+    border: solid #333333;
+    background: #0a0a0a;
+    margin-bottom: 1;
+}
+
+ConfirmationDialog Container > Horizontal {
+    height: auto;
+    margin-top: 1;
+    align: center middle;
+}
+
+ConfirmationDialog Container > Horizontal > Button {
+    margin: 0 1;
+    background: #1f1f1f;
+    color: #f0f0f0;
+    border: solid #333333;
+}
+
+ConfirmationDialog Container > Horizontal > Button:hover {
+    background: #333333;
+}
+
+ConfirmationDialog Container > Horizontal > Button:focus {
+    background: #4da6ff;
+}

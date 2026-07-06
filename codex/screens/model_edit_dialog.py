@@ -47,9 +47,9 @@ class ModelEditDialog(ModalScreen[ModelConfig]):
     """
     
     def __init__(self, model: ModelConfig = None, **kwargs):
+        super().__init__(**kwargs)
         self.model = model
         self.is_edit = model is not None
-        super().__init__(**kwargs)
     
     def compose(self) -> ComposeResult:
         with Container():

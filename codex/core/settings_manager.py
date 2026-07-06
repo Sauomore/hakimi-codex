@@ -41,6 +41,9 @@ class AISettings:
     show_tool_results: bool = True  # 显示工具执行结果
     tool_results_fold: bool = True  # 工具结果默认折叠
     markdown_render: bool = True  # AI 消息 Markdown 渲染
+    confirm_tool_execution: bool = True  # 是否启用 AI 工具执行确认机制
+    confirm_command_execution: bool = True  # 执行终端命令前是否确认
+    confirm_write_file: bool = True  # 写入文件前是否显示 diff 并确认
 
 
 @dataclass
