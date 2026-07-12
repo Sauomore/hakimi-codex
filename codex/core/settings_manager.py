@@ -44,6 +44,7 @@ class AISettings:
     confirm_tool_execution: bool = True  # 是否启用 AI 工具执行确认机制
     confirm_command_execution: bool = True  # 执行终端命令前是否确认
     confirm_write_file: bool = True  # 写入文件前是否显示 diff 并确认
+    max_tool_rounds: int = 10  # 最大工具调用轮数 (1-50)
 
 
 @dataclass

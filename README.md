@@ -167,6 +167,7 @@ If you omit the provider, Hakimi auto-detects from the model ID:
 | `show_tool_results` | bool | `true` | Show tool execution results |
 | `tool_results_fold` | bool | `true` | Collapse tool results by default |
 | `auto_analyze` | bool | `true` | Auto analyze project on start |
+| `max_tool_rounds` | int | `10` | Maximum tool call rounds (1-50) |
 
 ---
 

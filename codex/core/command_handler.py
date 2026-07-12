@@ -48,6 +48,7 @@ class CommandHandler:
         "confirm_tool_execution": ("启用 AI 工具执行确认机制", bool, "true/false"),
         "confirm_command_execution": ("执行终端命令前确认", bool, "true/false"),
         "confirm_write_file": ("写入文件前显示 diff 并确认", bool, "true/false"),
+        "max_tool_rounds": ("最大工具调用轮数", int, "1-50"),
     }
     
     def __init__(self):

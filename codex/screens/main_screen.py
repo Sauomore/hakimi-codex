@@ -337,6 +337,7 @@ class MainScreen(Screen):
             f"  confirm_tool_execution:   {ai.confirm_tool_execution}",
             f"  confirm_command_execution:{ai.confirm_command_execution}",
             f"  confirm_write_file:       {ai.confirm_write_file}",
+            f"  max_tool_rounds:          {ai.max_tool_rounds}",
             "", "Usage: /setting key=value",
         ]
         self._add_system_message("\n".join(lines))
@@ -366,6 +367,8 @@ class MainScreen(Screen):
             self.settings.ai.confirm_command_execution = value
         elif key == "confirm_write_file":
             self.settings.ai.confirm_write_file = value
+        elif key == "max_tool_rounds":
+            self.settings.ai.max_tool_rounds = max(1, min(50, value))
         save_settings(self.settings)
         self._add_system_message(f"Setting updated: {key} = {value}")
     
@@ -561,7 +564,7 @@ class MainScreen(Screen):
         self._update_status_bar()
 
         try:
-            max_rounds = 10
+            max_rounds = max(1, min(50, self.settings.ai.max_tool_rounds))
             for round_num in range(max_rounds):
                 api_messages = [m for m in self.messages if m["role"] in ("user", "assistant")]
                 system_prompt = self._build_system_prompt()
@@ -621,7 +624,7 @@ class MainScreen(Screen):
                         })
 
             if round_num >= max_rounds - 1:
-                self._add_system_message("[bold yellow]Max tool rounds reached (10). Stopping.[/bold yellow]")
+                self._add_system_message(f"[bold yellow]Max tool rounds reached ({max_rounds}). Stopping.[/bold yellow]")
 
         except Exception as e:
             self._add_system_message(f"[bold red]Error: {str(e)}[/bold red]")
