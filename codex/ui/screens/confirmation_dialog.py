@@ -33,9 +33,11 @@ class ConfirmationDialog(ModalScreen[bool]):
         margin-bottom: 1;
     }
     ConfirmationDialog Container > Static.message {
-        height: auto;
+        height: 1fr;
+        max-height: 30;
         margin-bottom: 1;
         color: $text;
+        overflow: auto scroll;
     }
     ConfirmationDialog Container > RichLog.content {
         height: 1fr;
@@ -75,12 +77,17 @@ class ConfirmationDialog(ModalScreen[bool]):
         with Container():
             yield Static(self.title, classes="title")
 
+            # 内容过长时截断显示，确保按钮可见
+            display_content = self.content
+            if len(display_content) > 3000:
+                display_content = display_content[:3000] + "\n\n... (内容已截断，共 " + str(len(self.content)) + " 字符)"
+
             if self.content_type == "diff":
                 log = RichLog(classes="content", wrap=True, markup=True, highlight=False, auto_scroll=True)
                 yield log
-                self._render_diff(log, self.content)
+                self._render_diff(log, display_content)
             else:
-                yield Static(self.content, classes="message")
+                yield Static(display_content, classes="message")
 
             with Horizontal():
                 yield Button(self.confirm_label, id="btn_confirm", variant="success")
