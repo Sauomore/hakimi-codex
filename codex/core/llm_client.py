@@ -2,18 +2,12 @@
 
 import json
 import asyncio
-import os
 from typing import AsyncIterator, Optional, Dict, Any, List
 
 import httpx
 
 from .models import ModelConfig, ProviderType
-
-
-def _debug_log(msg: str) -> None:
-    """调试日志."""
-    if os.environ.get("HAKIMI_DEBUG"):
-        print(f"[HAKIMI_DEBUG] {msg}")
+from ..utils.logger import debug as log_debug
 
 
 class LLMClient:
@@ -22,6 +16,7 @@ class LLMClient:
     def __init__(self, model: ModelConfig, think_mode: bool = True):
         self.model = model
         self.think_mode = think_mode
+        self.last_finish_reason: Optional[str] = None
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(120.0, connect=30.0),
             headers=self._get_headers()
@@ -117,41 +112,50 @@ class LLMClient:
         if system_prompt and messages and messages[0].get("role") != "system":
             payload["messages"] = [{"role": "system", "content": system_prompt}] + messages
 
-        _debug_log(f"POST {url}")
-        _debug_log(f"payload: {json.dumps(payload, ensure_ascii=False)}")
+        log_debug(f"POST {url}")
+        log_debug(f"payload: {json.dumps(payload, ensure_ascii=False)}")
 
         try:
             if stream:
                 async with self.client.stream("POST", url, json=payload) as response:
-                    _debug_log(f"response status: {response.status_code}")
+                    log_debug(f"response status: {response.status_code}")
                     response.raise_for_status()
                     async for line in response.aiter_lines():
-                        _debug_log(f"raw line: {line[:500]}")
+                        log_debug(f"raw line: {line[:500]}")
                         if line.startswith("data: "):
                             data = line[6:]
                             if data == "[DONE]":
                                 break
                             try:
                                 chunk = json.loads(data)
-                                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                                choice = chunk.get("choices", [{}])[0]
+                                finish_reason = choice.get("finish_reason")
+                                if finish_reason:
+                                    self.last_finish_reason = finish_reason
+                                    log_debug(f"finish_reason: {finish_reason}")
+                                delta = choice.get("delta", {})
                                 reasoning = delta.get("reasoning_content", "")
                                 content = delta.get("content", "")
                                 # 将思考内容包装成标签，便于上层统一提取
                                 if reasoning:
-                                    _debug_log(f"reasoning chunk: {reasoning[:200]}")
+                                    log_debug(f"reasoning chunk: {reasoning[:200]}")
                                     yield f"<thinking>{reasoning}</thinking>"
                                 if content:
-                                    _debug_log(f"content chunk: {content[:200]}")
+                                    log_debug(f"content chunk: {content[:200]}")
                                     yield content
                             except json.JSONDecodeError:
                                 continue
             else:
                 response = await self.client.post(url, json=payload)
-                _debug_log(f"response status: {response.status_code}")
+                log_debug(f"response status: {response.status_code}")
                 response.raise_for_status()
                 data = response.json()
-                _debug_log(f"response body: {json.dumps(data, ensure_ascii=False)[:1000]}")
-                message = data.get("choices", [{}])[0].get("message", {})
+                log_debug(f"response body: {json.dumps(data, ensure_ascii=False)[:1000]}")
+                choice = data.get("choices", [{}])[0]
+                self.last_finish_reason = choice.get("finish_reason")
+                if self.last_finish_reason:
+                    log_debug(f"finish_reason: {self.last_finish_reason}")
+                message = choice.get("message", {})
                 reasoning = message.get("reasoning_content", "")
                 content = message.get("content", "")
                 if reasoning:

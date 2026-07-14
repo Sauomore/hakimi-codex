@@ -8,8 +8,9 @@ from rich.syntax import Syntax
 from rich.text import Text
 from rich.panel import Panel
 
-from ..core.settings_manager import Settings, load_settings
-from ..core.command_handler import CommandHandler, CommandResult
+from codex.core.config import load_config
+from codex.core.models import AppConfig
+from codex.core.command_handler import CommandHandler, CommandResult
 
 
 class UserMessage(Static):
@@ -23,9 +24,9 @@ class UserMessage(Static):
     }
     """
     
-    def __init__(self, content: str, settings: Settings, **kwargs):
+    def __init__(self, content: str, config: AppConfig, **kwargs):
         self.content = content
-        self.settings = settings
+        self.config = config
         super().__init__(**kwargs)
     
     def compose(self) -> ComposeResult:
@@ -59,16 +60,16 @@ class AIMessage(Vertical):
     }
     """
     
-    def __init__(self, content: str, thinking: Optional[str], settings: Settings, **kwargs):
+    def __init__(self, content: str, thinking: Optional[str], config: AppConfig, **kwargs):
         self.content = content
         self.thinking = thinking
-        self.settings = settings
+        self.config = config
         self.is_thinking_expanded = False
         super().__init__(**kwargs)
     
     def compose(self) -> ComposeResult:
-        if self.thinking and self.settings.ai.think_mode:
-            if self.settings.ai.think_fold:
+        if self.thinking and self.config.ai.think_mode:
+            if self.config.ai.think_fold:
                 with Collapsible(title="thinking...", collapsed=True, classes="thinking-collapsible"):
                     yield Static(self.thinking, classes="thinking-content")
             else:
@@ -149,7 +150,7 @@ class ChatPanel(Vertical):
     def __init__(self, on_send: Optional[Callable] = None, on_command: Optional[Callable] = None, **kwargs):
         self.on_send_message = on_send
         self.on_command = on_command
-        self.settings = load_settings()
+        self.config = load_config()
         self.command_handler = CommandHandler()
         self.messages: List[dict] = []
         self.current_streaming_container: Optional[AIMessage] = None
@@ -160,20 +161,20 @@ class ChatPanel(Vertical):
         yield Input(placeholder="Enter message or /command...", id="chat_input")
     
     def on_mount(self):
-        self.add_system_message("Hakimi Codex v0.1.0")
+        self.add_system_message("Hakimi Codex v0.2.2")
         self.add_system_message("Type /help for available commands")
     
     def add_user_message(self, content: str):
         self.messages.append({"role": "user", "content": content})
         container = self.query_one("#messages_container", ScrollableContainer)
-        msg = UserMessage(content, self.settings)
+        msg = UserMessage(content, self.config)
         container.mount(msg)
         self.scroll_to_bottom()
     
     def add_ai_message(self, content: str, thinking: Optional[str] = None):
         self.messages.append({"role": "assistant", "content": content, "thinking": thinking})
         container = self.query_one("#messages_container", ScrollableContainer)
-        msg = AIMessage(content, thinking, self.settings)
+        msg = AIMessage(content, thinking, self.config)
         container.mount(msg)
         self.scroll_to_bottom()
     
@@ -184,7 +185,7 @@ class ChatPanel(Vertical):
         self.scroll_to_bottom()
     
     def add_tool_result(self, tool_name: str, result: str):
-        if not self.settings.ai.show_tool_results:
+        if not self.config.ai.show_tool_results:
             return
         container = self.query_one("#messages_container", ScrollableContainer)
         msg = ToolResultMessage(tool_name, result)
@@ -333,5 +334,5 @@ class ChatPanel(Vertical):
             if self.on_send_message:
                 self.on_send_message(content)
     
-    def update_settings(self, settings: Settings):
-        self.settings = settings
+    def update_settings(self, config: AppConfig):
+        self.config = config

@@ -3,7 +3,7 @@ chcp 65001 >nul
 REM Codex 安装脚本 (Windows)
 
 echo ==========================================
-echo    Codex CLI 安装程序
+echo   Hakimi Codex CLI 安装程序
 echo ==========================================
 echo.
 

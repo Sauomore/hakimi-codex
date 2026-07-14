@@ -7,7 +7,7 @@ from textual.containers import Vertical, Horizontal
 from textual.reactive import reactive
 from textual.app import ComposeResult
 
-from ..core.models import ModelConfig, ProviderType
+from codex.core.models import ModelConfig, ProviderType
 
 
 class ModelSelectorWidget(Vertical):

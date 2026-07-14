@@ -346,38 +346,28 @@ class ProjectAnalyzer:
         return deps[:20]
     
     def get_summary(self) -> str:
-        """获取项目摘要文本."""
+        """获取项目摘要文本（精简版，避免与侧边栏重复）."""
         info = self.analyze()
-        
-        lines = [
-            f"[目录] 项目: {info.name}",
-            f"[路径] 路径: {info.path}",
-            f"[类型] 类型: {info.type or '未知'}",
-        ]
-        
+
+        lines = [f"[类型] {info.type or 'unknown'}"]
+
         if info.language:
-            lines.append(f"[语言] 语言: {info.language}")
+            lines.append(f"[语言] {info.language}")
         if info.framework:
-            lines.append(f"[框架] 框架: {info.framework}")
+            lines.append(f"[框架] {info.framework}")
         if info.build_tool:
-            lines.append(f"[构建工具] 构建工具: {info.build_tool}")
+            lines.append(f"[构建] {info.build_tool}")
         if info.test_framework:
-            lines.append(f"[测试工具] 测试工具: {info.test_framework}")
-        
-        lines.extend([
-            f"[文件数] 文件数: {info.files_count}",
-            f"[Git] Git: {'[启用]' if info.has_git else '[禁用]'}",
-            f"[Docker] Docker: {'[启用]' if info.has_docker else '[禁用]'}",
-            f"[测试] 测试: {'[启用]' if info.has_tests else '[禁用]'}",
-            f"[CI/CD] CI/CD: {'[启用]' if info.has_ci else '[禁用]'}",
-        ])
-        
+            lines.append(f"[测试] {info.test_framework}")
+        if info.has_docker:
+            lines.append("[Docker] enabled")
+        if info.has_ci:
+            lines.append("[CI/CD] enabled")
         if info.key_files:
-            lines.append(f"[文件] 关键文件: {', '.join(info.key_files[:5])}")
-        
+            lines.append(f"[关键文件] {', '.join(info.key_files[:5])}")
         if info.dependencies:
-            lines.append(f"[依赖] 依赖: {', '.join(info.dependencies[:5])}")
-        
+            lines.append(f"[依赖] {', '.join(info.dependencies[:5])}")
+
         return "\n".join(lines)
     
     def get_system_context(self) -> str:

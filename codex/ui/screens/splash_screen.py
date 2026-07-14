@@ -5,10 +5,12 @@ from textual.screen import Screen
 from textual.containers import Container
 from textual.widgets import Button, Static
 
+from codex import __version__
+
 
 class SplashScreen(Screen):
     """应用启动画面."""
-    
+
     CSS = """
     SplashScreen {
         align: center middle;
@@ -47,7 +49,7 @@ class SplashScreen(Screen):
         background: #3b82f6;
     }
     """
-    
+
     def compose(self) -> ComposeResult:
         with Container():
             yield Static("""
@@ -55,11 +57,11 @@ HAKIMI CODEX
 
 AI Coding Assistant
             """, classes="logo")
-            yield Static("v0.1.0", classes="subtitle")
+            yield Static(f"v{__version__}", classes="subtitle")
             yield Button("Open Project", id="open_project", variant="primary")
             yield Button("Settings", id="settings", variant="default")
             yield Button("Help", id="help", variant="default")
-    
+
     def on_button_pressed(self, event: Button.Pressed):
         """按钮点击事件."""
         if event.button.id == "open_project":

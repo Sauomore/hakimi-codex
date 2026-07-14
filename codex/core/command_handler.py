@@ -29,6 +29,8 @@ class CommandHandler:
         "/commit": ("提交当前更改到 Git", "[message]", "/commit\n/commit 'fix: bug'"),
         "/status": ("显示 Git 状态和项目信息", "", "/status"),
         "/run": ("执行 Shell 命令", "<command>", "/run python -m pytest"),
+        "/agent": ("多 Agent 协作模式控制", "[on|off|status|test on|off|model <role> <id>]", "/agent on"),
+        "/about": ("显示 Hakimi CLI 详细信息", "", "/about"),
         "/exit": ("退出应用", "", "/exit"),
     }
     
@@ -49,6 +51,13 @@ class CommandHandler:
         "confirm_command_execution": ("执行终端命令前确认", bool, "true/false"),
         "confirm_write_file": ("写入文件前显示 diff 并确认", bool, "true/false"),
         "max_tool_rounds": ("最大工具调用轮数", int, "1-50"),
+        "debug_mode": ("启用调试模式并在项目根目录输出日志", bool, "true/false"),
+        "agent_mode": ("启用多 Agent 协作模式", bool, "true/false"),
+        "agent_run_tests": ("Agent 流水线是否自动运行测试", bool, "true/false"),
+        "planner_model": ("Planner Agent 使用的模型 ID", str, "model_id or empty"),
+        "coder_model": ("Coder Agent 使用的模型 ID", str, "model_id or empty"),
+        "reviewer_model": ("Reviewer Agent 使用的模型 ID", str, "model_id or empty"),
+        "tester_model": ("Tester Agent 使用的模型 ID", str, "model_id or empty"),
     }
     
     def __init__(self):
@@ -116,6 +125,12 @@ class CommandHandler:
         elif cmd == "/run":
             return CommandResult(True, f"执行: {args}", action="run_command", data={"command": args})
         
+        elif cmd == "/agent":
+            return self._handle_agent(args)
+        
+        elif cmd == "/about":
+            return CommandResult(True, "", action="show_about")
+        
         elif cmd == "/exit":
             return CommandResult(True, "退出", action="exit")
         
@@ -156,6 +171,50 @@ class CommandHandler:
         
         return CommandResult(True, "\n".join(lines))
     
+    def _handle_agent(self, args: str) -> CommandResult:
+        """处理 /agent 命令."""
+        parts = args.strip().split(maxsplit=2)
+        if not parts or parts[0].lower() in ("status", ""):
+            return CommandResult(True, "", action="get_setting", data={"key": "agent_mode"})
+
+        sub = parts[0].lower()
+        if sub in ("on", "true", "1", "yes"):
+            return CommandResult(True, "", action="set_setting", data={"key": "agent_mode", "value": True})
+        if sub in ("off", "false", "0", "no"):
+            return CommandResult(True, "", action="set_setting", data={"key": "agent_mode", "value": False})
+
+        if sub == "model":
+            if len(parts) < 3:
+                return CommandResult(
+                    False,
+                    "用法: /agent model <role> <model_id>\n"
+                    "roles: planner, coder, reviewer, tester\n"
+                    "example: /agent model coder deepseek-v4-pro"
+                )
+            role = parts[1].lower()
+            model_id = parts[2].strip()
+            valid_roles = {"planner", "coder", "reviewer", "tester"}
+            if role not in valid_roles:
+                return CommandResult(False, f"未知角色: {role}. 可用: planner, coder, reviewer, tester")
+            return CommandResult(
+                True,
+                "",
+                action="set_setting",
+                data={"key": f"{role}_model", "value": model_id}
+            )
+
+        if sub == "test":
+            if len(parts) < 2:
+                return CommandResult(False, "用法: /agent test [on|off]")
+            on_off = parts[1].lower()
+            value = on_off in ("on", "true", "1", "yes")
+            return CommandResult(True, "", action="set_setting", data={"key": "agent_run_tests", "value": value})
+
+        return CommandResult(
+            False,
+            "用法: /agent [on|off|status|test on|off|model <role> <model_id>]"
+        )
+
     def _handle_setting(self, args: str) -> CommandResult:
         """处理 /setting 命令."""
         if not args.strip():

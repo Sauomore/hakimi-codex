@@ -8,10 +8,10 @@ from textual.widgets import Static, Button, RichLog
 
 class ConfirmationDialog(ModalScreen[bool]):
     """通用确认对话框.
-    
+
     支持纯文本和 diff 两种内容展示模式，返回 True/False 表示用户确认/取消.
     """
-    
+
     CSS = """
     ConfirmationDialog {
         align: center middle;
@@ -54,7 +54,7 @@ class ConfirmationDialog(ModalScreen[bool]):
         margin: 0 1;
     }
     """
-    
+
     def __init__(
         self,
         title: str,
@@ -70,22 +70,22 @@ class ConfirmationDialog(ModalScreen[bool]):
         self.content_type = content_type  # "text" 或 "diff"
         self.confirm_label = confirm_label
         self.cancel_label = cancel_label
-    
+
     def compose(self) -> ComposeResult:
         with Container():
             yield Static(self.title, classes="title")
-            
+
             if self.content_type == "diff":
                 log = RichLog(classes="content", wrap=True, markup=True, highlight=False, auto_scroll=True)
                 yield log
                 self._render_diff(log, self.content)
             else:
                 yield Static(self.content, classes="message")
-            
+
             with Horizontal():
                 yield Button(self.confirm_label, id="btn_confirm", variant="success")
                 yield Button(self.cancel_label, id="btn_cancel", variant="default")
-    
+
     def _render_diff(self, log: RichLog, diff: str):
         """渲染 diff 内容."""
         log.write("[bold #e0e0e0]--- diff[/bold #e0e0e0]")
@@ -99,14 +99,14 @@ class ConfirmationDialog(ModalScreen[bool]):
             else:
                 log.write(f"[#aaaaaa]{line}[/#aaaaaa]")
         log.write("[bold #e0e0e0]---[/bold #e0e0e0]")
-    
+
     def on_button_pressed(self, event: Button.Pressed):
         """按钮点击事件."""
         if event.button.id == "btn_confirm":
             self.dismiss(True)
         else:
             self.dismiss(False)
-    
+
     def on_key(self, event):
         """键盘快捷键."""
         if event.key == "escape":

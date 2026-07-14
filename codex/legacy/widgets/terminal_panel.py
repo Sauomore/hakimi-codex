@@ -11,7 +11,7 @@ from rich.syntax import Syntax
 from rich.text import Text
 from rich.panel import Panel
 
-from ..core.tools import ToolExecutor, ToolResult, ToolResultStatus
+from codex.core.tools import ToolExecutor, ToolResult, ToolResultStatus
 
 
 class TerminalPanel(Vertical):
