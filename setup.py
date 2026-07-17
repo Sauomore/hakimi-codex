@@ -15,6 +15,7 @@ setup(
         "toml>=0.10.2",
         "pydantic>=2.0.0",
         "aiohttp>=3.9.0",
+        "pyperclip>=1.8.2",
     ],
     python_requires=">=3.9",
     entry_points={

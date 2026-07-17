@@ -81,6 +81,8 @@ class AISettings(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=4096, ge=1, le=128000)
     context_window: int = Field(default=8192, ge=1024)
+    max_context_messages: int = Field(default=20, ge=2, le=200, description="保留的最大对话轮数（user+assistant 总条数）")
+    context_ttl_hours: Optional[float] = Field(default=None, description="上下文时间窗（小时），为空则不按时间裁剪")
     auto_analyze: bool = Field(default=True)
     show_tool_results: bool = Field(default=True)
     tool_results_fold: bool = Field(default=True)
@@ -97,6 +99,7 @@ class AISettings(BaseModel):
     coder_model: Optional[str] = Field(default=None, description="Coder Agent 使用的模型 ID，空则使用主模型")
     reviewer_model: Optional[str] = Field(default=None, description="Reviewer Agent 使用的模型 ID，空则使用主模型")
     tester_model: Optional[str] = Field(default=None, description="Tester Agent 使用的模型 ID，空则使用主模型")
+    save_chat_history: bool = Field(default=True, description="是否本地保存聊天记录")
 
 
 class EditorSettings(BaseModel):

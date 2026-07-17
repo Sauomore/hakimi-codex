@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional
 from textual.worker import get_current_worker
 
 from .config import add_model, get_active_model
+from .chat_history import ChatHistory, ChatMessage
 from .llm_client import LLMClient
 from .models import AppConfig, ModelConfig, ProviderType
 from .prompts import build_system_prompt
@@ -29,14 +30,16 @@ class ChatCallbacks:
     def __init__(
         self,
         add_system_message: Callable[[str], None],
-        add_ai_message: Callable[[str, Optional[str]], None],
+        add_ai_message: Callable[[str, Optional[str], Optional[str]], None],
         add_tool_result: Callable[[str, str], None],
+        stream_chunk: Callable[[str], None] = None,
         confirm_action: Callable[..., Any] = None,
         show_diff_preview: Callable[[str], None] = None,
     ):
         self.add_system_message = add_system_message
         self.add_ai_message = add_ai_message
         self.add_tool_result = add_tool_result
+        self.stream_chunk = stream_chunk
         self.confirm_action = confirm_action or _default_confirm
         self.show_diff_preview = show_diff_preview or (lambda diff: None)
 
@@ -49,7 +52,13 @@ class ChatEngine:
         self.config = config
         self.llm_client: Optional[LLMClient] = None
         self.tool_executor = ToolExecutor(str(self.project_path))
-        self.messages: List[Dict[str, Any]] = []
+        self.history = ChatHistory(
+            self.project_path,
+            max_context_messages=config.ai.max_context_messages,
+            context_ttl_hours=config.ai.context_ttl_hours,
+        )
+        if config.ai.save_chat_history:
+            self.history.load()
 
     def set_model(self, model: ModelConfig) -> None:
         """设置当前模型并初始化客户端."""
@@ -63,13 +72,17 @@ class ChatEngine:
             await self.llm_client.close()
             self.llm_client = None
 
-    def add_user_message(self, content: str) -> None:
+    def add_user_message(self, content: str) -> ChatMessage:
         """添加用户消息到历史."""
-        self.messages.append({"role": "user", "content": content})
+        return self.history.add("user", content)
 
     def clear_history(self) -> None:
         """清空对话历史."""
-        self.messages = []
+        self.history.clear()
+
+    def _history_api_messages(self) -> List[Dict[str, str]]:
+        """根据配置返回裁剪后的上下文消息."""
+        return self.history.get_context_messages()
 
     async def process_message(self, content: str, callbacks: ChatCallbacks) -> None:
         """处理一条用户消息."""
@@ -90,12 +103,14 @@ class ChatEngine:
         try:
             max_rounds = max(1, min(50, self.config.ai.max_tool_rounds))
             for round_num in range(max_rounds):
-                api_messages = [m for m in self.messages if m["role"] in ("user", "assistant")]
+                api_messages = self._history_api_messages()
                 system_prompt = build_system_prompt(self.project_path)
                 full_response = ""
                 thinking_content = ""
 
-                callbacks.add_system_message("[#888888]Thinking...[/#888888]")
+                # 通知 UI 开始流式输出
+                if callbacks.stream_chunk:
+                    callbacks.stream_chunk("")
 
                 worker = get_current_worker()
                 async for chunk in self.llm_client.chat(
@@ -106,9 +121,15 @@ class ChatEngine:
                     if worker.is_cancelled:
                         break
                     full_response += chunk
+                    if callbacks.stream_chunk:
+                        callbacks.stream_chunk(chunk)
 
                 if worker.is_cancelled:
                     break
+
+                # 通知 UI 流式输出结束
+                if callbacks.stream_chunk:
+                    callbacks.stream_chunk(None)
 
                 thinking_content = self._extract_thinking(full_response)
                 full_response = self._strip_thinking_tags(full_response)
@@ -118,16 +139,16 @@ class ChatEngine:
                 if not tool_results:
                     text_only = re.sub(r'```(?:tool|json)\s*\n.*?\n```', '', full_response, flags=re.DOTALL).strip()
                     if self._is_transitional_response(text_only) and round_num < max_rounds - 1:
-                        self.messages.append({"role": "assistant", "content": full_response})
+                        self.history.add("assistant", full_response)
                         callbacks.add_system_message(f"[#888888]> {text_only}[/#888888]")
-                        self.messages.append({
-                            "role": "user",
-                            "content": (
+                        self.history.add(
+                            "user",
+                            (
                                 "You said you would check or confirm something, but no tool call was found in your response. "
                                 "If you need data to answer, call a tool immediately using a ```tool block with strict JSON. "
                                 "If you already have enough data, provide the final answer directly without transitional phrases."
                             )
-                        })
+                        )
                         continue
 
                     if self.llm_client and self.llm_client.last_finish_reason == "length":
@@ -137,18 +158,20 @@ class ChatEngine:
                             "or ask for a shorter file.[/bold yellow]"
                         )
 
-                    callbacks.add_ai_message(full_response, thinking_content if thinking_content else None)
+                    msg = self.history.add("assistant", full_response, thinking=thinking_content or None)
+                    callbacks.add_ai_message(full_response, thinking_content if thinking_content else None, msg.id)
                     break
                 else:
-                    self.messages.append({"role": "assistant", "content": full_response})
+                    self.history.add("assistant", full_response)
                     text_only = re.sub(r'```(?:tool|json)\s*\n.*?\n```', '', full_response, flags=re.DOTALL).strip()
                     if text_only:
                         callbacks.add_system_message(f"[#888888]> {text_only}[/#888888]")
                     for tr in tool_results:
-                        self.messages.append({
-                            "role": "user",
-                            "content": f"[Tool '{tr['tool_name']}' result]\n```\n{tr['output']}\n```"
-                        })
+                        self.history.add(
+                            "tool",
+                            f"[Tool '{tr['tool_name']}' result]\n```\n{tr['output']}\n```",
+                            tool_name=tr['tool_name'],
+                        )
 
             if round_num >= max_rounds - 1:
                 callbacks.add_system_message(f"[bold yellow]Max tool rounds reached ({max_rounds}). Stopping.[/bold yellow]")

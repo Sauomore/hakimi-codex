@@ -1,5 +1,7 @@
 """确认对话框 - 用于终端命令和代码修改前的用户确认."""
 
+from typing import Callable, Optional
+
 from textual.app import ComposeResult
 from textual.screen import ModalScreen
 from textual.containers import Container, Horizontal
@@ -30,22 +32,24 @@ class ConfirmationDialog(ModalScreen[bool]):
         text-align: center;
         color: $primary-lighten-2;
         height: auto;
-        margin-bottom: 1;
+        margin-bottom: 0;
     }
-    ConfirmationDialog Container > Static.message {
-        height: 1fr;
-        max-height: 30;
+    ConfirmationDialog Container > Static.scroll_hint {
+        height: auto;
+        color: $text-muted;
+        text-style: italic;
+        text-align: center;
         margin-bottom: 1;
-        color: $text;
-        overflow: auto scroll;
     }
     ConfirmationDialog Container > RichLog.content {
         height: 1fr;
         min-height: 5;
-        max-height: 30;
+        max-height: 35;
         border: solid $primary-darken-2;
         background: $surface-darken-1;
         margin-bottom: 1;
+        overflow: auto scroll;
+        scrollbar-size: 1 1;
     }
     ConfirmationDialog Container > Horizontal {
         height: auto;
@@ -64,6 +68,7 @@ class ConfirmationDialog(ModalScreen[bool]):
         content_type: str = "text",
         confirm_label: str = "确认",
         cancel_label: str = "取消",
+        on_dismiss: Optional[Callable[[bool], None]] = None,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -72,22 +77,33 @@ class ConfirmationDialog(ModalScreen[bool]):
         self.content_type = content_type  # "text" 或 "diff"
         self.confirm_label = confirm_label
         self.cancel_label = cancel_label
+        self.on_dismiss_callback = on_dismiss
 
     def compose(self) -> ComposeResult:
         with Container():
             yield Static(self.title, classes="title")
-
-            # 内容过长时截断显示，确保按钮可见
-            display_content = self.content
-            if len(display_content) > 3000:
-                display_content = display_content[:3000] + "\n\n... (内容已截断，共 " + str(len(self.content)) + " 字符)"
+            yield Static("↑↓ 鼠标滚轮 / PageUp / PageDown 滚动查看", classes="scroll_hint")
 
             if self.content_type == "diff":
-                log = RichLog(classes="content", wrap=True, markup=True, highlight=False, auto_scroll=True)
+                log = RichLog(
+                    classes="content",
+                    wrap=True,
+                    markup=True,
+                    highlight=False,
+                    auto_scroll=False,
+                )
                 yield log
-                self._render_diff(log, display_content)
+                self._render_diff(log, self.content)
             else:
-                yield Static(display_content, classes="message")
+                log = RichLog(
+                    classes="content",
+                    wrap=True,
+                    markup=False,
+                    highlight=False,
+                    auto_scroll=False,
+                )
+                yield log
+                self._render_text(log, self.content)
 
             with Horizontal():
                 yield Button(self.confirm_label, id="btn_confirm", variant="success")
@@ -106,6 +122,20 @@ class ConfirmationDialog(ModalScreen[bool]):
             else:
                 log.write(f"[#aaaaaa]{line}[/#aaaaaa]")
         log.write("[bold #e0e0e0]---[/bold #e0e0e0]")
+
+    def _render_text(self, log: RichLog, text: str):
+        """渲染纯文本内容（按行写入，支持长文本滚动）."""
+        for line in text.split("\n"):
+            log.write(line)
+
+    def dismiss(self, result: Optional[bool] = None) -> None:
+        """关闭对话框并触发回调."""
+        if self.on_dismiss_callback is not None and result is not None:
+            try:
+                self.on_dismiss_callback(bool(result))
+            except Exception:
+                pass
+        super().dismiss(result)
 
     def on_button_pressed(self, event: Button.Pressed):
         """按钮点击事件."""

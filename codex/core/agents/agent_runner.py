@@ -8,6 +8,7 @@ from ..llm_client import LLMClient
 from ..models import AppConfig, ModelConfig
 from ..tools import ToolExecutor, ToolResultStatus
 from ..tool_parser import parse_tool_calls
+from ..diff_utils import generate_unified_diff
 from ...utils.logger import debug as log_debug
 from ...utils.markdown import extract_thinking_tags
 from .models import AgentRole, AgentTask, AgentResult
@@ -105,6 +106,7 @@ class AgentRunner:
                     # 写文件前确认（如果 UI 层传入了确认回调且配置允许）
                     if tool_name == "write_file" and self.confirm_callback:
                         file_path = parameters.get("file_path", "")
+                        new_content = parameters.get("content", "")
                         need_confirm = (
                             self.config.ai.confirm_tool_execution
                             and self.config.ai.confirm_write_file
@@ -112,10 +114,19 @@ class AgentRunner:
                         if need_confirm:
                             try:
                                 log_debug(f"Agent {self.role.value} requesting confirmation for write_file: {file_path}")
+                                read_result = self.tool_executor.read_file(file_path)
+                                if read_result.status == ToolResultStatus.SUCCESS:
+                                    content_to_show = generate_unified_diff(
+                                        read_result.output, new_content, file_path
+                                    )
+                                    content_type = "diff"
+                                else:
+                                    content_to_show = new_content
+                                    content_type = "text"
                                 confirmed = await self.confirm_callback(
-                                    title=f"Agent {self.role.value} 请求写入文件",
-                                    content=file_path,
-                                    content_type="text",
+                                    title=f"Agent {self.role.value} 请求写入文件: {file_path}",
+                                    content=content_to_show,
+                                    content_type=content_type,
                                     confirm_label="确认写入",
                                 )
                             except Exception as e:

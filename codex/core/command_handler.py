@@ -25,6 +25,10 @@ class CommandHandler:
         "/file": ("添加文件到上下文", "<path>", "/file src/main.py"),
         "/diff": ("显示当前文件的 diff", "[file]", "/diff\n/diff src/main.py"),
         "/clear": ("清空对话历史", "", "/clear"),
+        "/copy": ("复制消息到剪贴板或导出文件", "[last|<id>|all|view|file]", "/copy last\n/copy all\n/copy abc123\n/copy view\n/copy file"),
+        "/export": ("导出聊天记录到文件", "[json|text] [path]", "/export\n/export text\n/export json ./backup/chat.jsonl"),
+        "/import": ("从 JSONL 文件导入聊天记录", "<path> [--merge]", "/import ./backup/chat.jsonl\n/import ./backup/chat.jsonl --merge"),
+        "/history": ("显示聊天记录列表", "", "/history"),
         "/undo": ("撤销最后一次 AI 修改", "", "/undo"),
         "/commit": ("提交当前更改到 Git", "[message]", "/commit\n/commit 'fix: bug'"),
         "/status": ("显示 Git 状态和项目信息", "", "/status"),
@@ -51,6 +55,9 @@ class CommandHandler:
         "confirm_command_execution": ("执行终端命令前确认", bool, "true/false"),
         "confirm_write_file": ("写入文件前显示 diff 并确认", bool, "true/false"),
         "max_tool_rounds": ("最大工具调用轮数", int, "1-50"),
+        "max_context_messages": ("保留的最大对话轮数", int, "2-200"),
+        "context_ttl_hours": ("上下文时间窗（小时）", float, ">0 or empty"),
+        "save_chat_history": ("是否本地保存聊天记录", bool, "true/false"),
         "debug_mode": ("启用调试模式并在项目根目录输出日志", bool, "true/false"),
         "agent_mode": ("启用多 Agent 协作模式", bool, "true/false"),
         "agent_run_tests": ("Agent 流水线是否自动运行测试", bool, "true/false"),
@@ -112,7 +119,34 @@ class CommandHandler:
         
         elif cmd == "/clear":
             return CommandResult(True, "对话历史已清空", action="clear_chat")
-        
+
+        elif cmd == "/copy":
+            target = args.strip() or "last"
+            return CommandResult(True, f"复制: {target}", action="copy_message", data={"target": target})
+
+        elif cmd == "/export":
+            parts = args.strip().split(maxsplit=1)
+            fmt = parts[0].lower() if parts else "text"
+            if fmt not in ("json", "jsonl", "text"):
+                fmt = "text"
+                path = args.strip() or ""
+            else:
+                path = parts[1] if len(parts) > 1 else ""
+            if fmt == "json":
+                fmt = "jsonl"
+            return CommandResult(True, f"导出: {fmt} {path or 'default'}", action="export_history", data={"format": fmt, "path": path})
+
+        elif cmd == "/import":
+            parts = args.strip().split()
+            if not parts:
+                return CommandResult(False, "用法: /import <path> [--merge]")
+            path = parts[0]
+            merge = "--merge" in parts[1:]
+            return CommandResult(True, f"导入: {path}", action="import_history", data={"path": path, "merge": merge})
+
+        elif cmd == "/history":
+            return CommandResult(True, "", action="show_history")
+
         elif cmd == "/undo":
             return CommandResult(True, "已撤销最后一次修改", action="undo")
         
@@ -143,33 +177,57 @@ class CommandHandler:
     
     def _handle_help(self, args: str) -> CommandResult:
         """处理 /help 命令."""
+        sections = {
+            "聊天与会话": ["/help", "/clear", "/history", "/copy", "/export", "/import", "/undo"],
+            "模型与配置": ["/model", "/setting", "/agent"],
+            "上下文与工具": ["/file", "/diff", "/run"],
+            "Git 与项目": ["/commit", "/status"],
+            "系统": ["/about", "/exit"],
+        }
+
+        cmd_width = max(len(cmd) for cmd in self.COMMANDS)
         lines = [
             "",
-            "Hakimi Codex 命令列表",
-            "=" * 40,
+            "[bold #58a6ff]╭──────────────────────────────────────────────────╮[/bold #58a6ff]",
+            "[bold #58a6ff]│         Hakimi Codex 命令列表                    │[/bold #58a6ff]",
+            "[bold #58a6ff]╰──────────────────────────────────────────────────╯[/bold #58a6ff]",
             "",
         ]
-        
-        for cmd, (desc, param, example) in self.COMMANDS.items():
-            lines.append(f"  {cmd:<12} {desc}")
-            if param:
-                lines.append(f"              参数: {param}")
-            if example:
-                lines.append(f"              示例: {example}")
+
+        for section_name, cmds in sections.items():
+            lines.append(f"[bold #f0883e]▸ {section_name}[/bold #f0883e]")
+            for cmd in cmds:
+                if cmd not in self.COMMANDS:
+                    continue
+                desc, param, example = self.COMMANDS[cmd]
+                param_text = f"[italic #8b949e] {self._escape_markup(param)}[/italic #8b949e]  " if param else "  "
+                lines.append(f"  [bold #58a6ff]{cmd:<{cmd_width}}[/bold #58a6ff]{param_text}{desc}")
+                if example:
+                    for ex_line in example.split("\n"):
+                        lines.append(f"  {' ' * cmd_width}   [bold #3fb950]↳[/bold #3fb950] {self._escape_markup(ex_line)}")
             lines.append("")
-        
+
         lines.extend([
-            "设置项 (/setting key=value)",
-            "-" * 40,
-            "",
+            "[bold #f0883e]▸ 设置项 (/setting key=value)[/bold #f0883e]",
+            f"  {'名称':<22}{'类型':<10}{'说明':<30}{'可取值'}",
+            f"  {'─' * 22}{'─' * 10}{'─' * 30}{'─' * 15}",
         ])
-        
+
         for key, (desc, type_, hint) in self.SETTING_KEYS.items():
-            lines.append(f"  {key:<20} {desc} ({type_.__name__}) [{hint}]")
-        
-        lines.append("")
-        
+            lines.append(
+                f"  [bold #58a6ff]{key:<20}[/bold #58a6ff] "
+                f"{type_.__name__:<10} "
+                f"{desc:<30} "
+                f"[italic #8b949e]{self._escape_markup(hint)}[/italic #8b949e]"
+            )
+
+        lines.extend(["", "[italic #6e7681]提示: 命令参数中 [[ ]] 表示可选项，< > 表示必填项。[/italic #6e7681]", ""])
         return CommandResult(True, "\n".join(lines))
+
+    @staticmethod
+    def _escape_markup(text: str) -> str:
+        """转义 Rich markup 中的方括号."""
+        return text.replace("[", "[[").replace("]", "]]")
     
     def _handle_agent(self, args: str) -> CommandResult:
         """处理 /agent 命令."""

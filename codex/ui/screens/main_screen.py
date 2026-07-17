@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -13,6 +14,7 @@ from textual.reactive import reactive
 
 from rich.markdown import Markdown
 from rich.syntax import Syntax
+from rich.text import Text
 
 from codex import __version__, __author__
 from codex.core.models import AppConfig, ModelConfig, ProviderType
@@ -32,7 +34,9 @@ from codex.core.chat_engine import ChatEngine, ChatCallbacks
 from codex.core.agents import Orchestrator
 from codex.utils.markdown import parse_content
 from codex.utils.logger import setup_logger, debug as log_debug
+from codex.utils.clipboard import copy_to_clipboard, export_to_file
 from .confirmation_dialog import ConfirmationDialog
+from .copy_view_dialog import CopyViewDialog
 
 
 class ChatInput(TextArea):
@@ -45,6 +49,13 @@ class ChatInput(TextArea):
             event.prevent_default()
             event.stop()
             self.insert("\n")
+            return
+
+        # 让 Ctrl+C 退出应用，避免被 TextArea 默认 copy 占用
+        if event.key == "ctrl+c":
+            event.prevent_default()
+            event.stop()
+            self.screen.action_quit()
             return
 
         if event.key == "up":
@@ -75,11 +86,19 @@ class MainScreen(Screen):
     config = reactive[AppConfig](AppConfig())
     is_processing = reactive(False)
 
+    BINDINGS = [
+        ("f5", "copy_last_message", "Copy last message"),
+        ("f6", "show_copy_view", "Show copy view"),
+        ("ctrl+c", "quit", "Quit"),
+    ]
+
     def __init__(self, project_path: str = ".", **kwargs):
         self.project_path = Path(project_path).resolve()
         self.command_handler = CommandHandler()
         self.input_history: list[str] = []
         self.input_history_index = -1
+        self._streaming_buffer = ""
+        self._streaming_active = False
         super().__init__(**kwargs)
         self.chat_engine = ChatEngine(str(self.project_path), self.config)
 
@@ -97,7 +116,14 @@ class MainScreen(Screen):
                 yield Static("Shortcuts", classes="sidebar_title", id="sidebar_title_shortcuts")
                 yield Static(id="shortcuts_info")
             with Vertical(id="center_panel"):
-                yield RichLog(id="messages_log", wrap=True, markup=True, highlight=False, auto_scroll=True)
+                yield RichLog(
+                    id="messages_log",
+                    wrap=True,
+                    markup=True,
+                    highlight=False,
+                    auto_scroll=True,
+                )
+                yield Static("", id="streaming_output")
         with Vertical(id="bottom_panel"):
             yield Static("Tool Result", id="bottom_panel_title")
             yield RichLog(id="tool_result_log", wrap=True, markup=True, highlight=False, auto_scroll=True)
@@ -106,7 +132,7 @@ class MainScreen(Screen):
                 yield ChatInput(id="chat_input")
                 yield Button("Send", id="send_button")
             yield Static(
-                "Enter newline · Ctrl+O exit · /help",
+                "Enter newline · F5 copy last · F6 copy view · Ctrl+C exit · /help",
                 id="input_hint",
             )
 
@@ -116,6 +142,9 @@ class MainScreen(Screen):
         setup_logger(self.project_path, self.config.ai.debug_mode)
         self._update_sidebar()
         self._update_runtime_status({"agent": "-", "model": "-", "state": "idle"})
+
+        streaming_output = self.query_one("#streaming_output", Static)
+        streaming_output.display = False
 
         hakimi_lines = [
             "██╗  ██╗ █████╗ ██╗  ██╗██╗███╗   ███╗██╗",
@@ -160,6 +189,10 @@ class MainScreen(Screen):
             self._add_system_message("Example: /model add deepseek-v3 sk-xxx deepseek")
 
         self._add_system_message("Type /help for all commands")
+
+        # 加载并显示历史聊天记录
+        if self.config.ai.save_chat_history:
+            self._load_and_show_history()
 
         bottom_panel = self.query_one("#bottom_panel", Vertical)
         bottom_panel.display = False
@@ -246,26 +279,76 @@ class MainScreen(Screen):
 
         shortcuts_info.update(
             "Enter newline\n"
-            "Ctrl+O exit\n"
+            "F5 copy last AI\n"
+            "F6 copy view\n"
+            "Ctrl+C exit\n"
             "Up/Down history\n"
             "/help commands"
         )
 
+    def _load_and_show_history(self):
+        """加载历史记录并渲染到消息区."""
+        history = self.chat_engine.history
+        if not history.messages:
+            return
+
+        self._add_system_message("--- 历史聊天记录 ---")
+        for msg in history.messages:
+            if msg.role == "user":
+                self._render_user_message(msg.content, msg.id)
+            elif msg.role == "assistant":
+                self._render_ai_message(msg.content, msg.thinking, msg.id)
+            elif msg.role == "tool":
+                self._add_tool_result(msg.tool_name or "tool", msg.content)
+        self._add_system_message("--- 以上为历史记录 ---")
+
+    def _message_header(self, label: str, color: str, message_id: str) -> Text:
+        """生成带复制按钮标记的消息头部."""
+        ts = datetime.now().strftime("%H:%M:%S")
+        text = Text()
+        text.append(f"{label} {ts}", style=f"bold {color}")
+        text.append(f" id={message_id}", style="bold #888888")
+        return text
+
+    def _get_ai_label(self) -> str:
+        """获取当前 AI 消息应显示的标签（模型名或 AI）."""
+        active = get_active_model(self.config)
+        if active and active.name:
+            name = active.name.strip()
+            # 限制长度，避免头部过宽
+            return name[:18] + "..." if len(name) > 18 else name
+        return "AI"
+
     def _add_user_message(self, content: str):
-        self.chat_engine.add_user_message(content)
+        msg = self.chat_engine.add_user_message(content)
+        self._render_user_message(content, msg.id)
+
+    def _render_user_message(self, content: str, message_id: str):
         log = self.query_one("#messages_log", RichLog)
         log.write("")
-        log.write(f"[bold #4da6ff]> {content}[/bold #4da6ff]")
+        log.write(self._message_header("You", self.config.ui.user_color, message_id))
+        log.write(f"[bold {self.config.ui.user_color}]> {content}[/bold {self.config.ui.user_color}]")
         log.write("")
 
-    def _add_ai_message(self, content: str, thinking: Optional[str] = None):
+    def _add_ai_message(self, content: str, thinking: Optional[str] = None, message_id: Optional[str] = None):
+        self._render_ai_message(content, thinking, message_id)
+
+    def _render_ai_message(self, content: str, thinking: Optional[str] = None, message_id: Optional[str] = None):
         log = self.query_one("#messages_log", RichLog)
+        log.write("")
+        msg_id = message_id or "unknown"
+        ai_label = self._get_ai_label()
+        log.write(self._message_header(ai_label, self.config.ui.output_color, msg_id))
 
         if thinking and self.config.ai.think_mode:
             if self.config.ai.think_fold:
                 log.write(f"[#888888]Thinking... (use /setting think_fold=false to expand)[/#888888]")
             else:
-                log.write(f"[#{self.config.ui.think_color}]{thinking}[/#{self.config.ui.think_color}]")
+                tc = self.config.ui.think_color
+                log.write(f"[bold {tc}]╭─ Thinking ──────────────────────────────[/bold {tc}]")
+                for line in thinking.split("\n"):
+                    log.write(f"[{tc}]│ {line}[/{tc}]")
+                log.write(f"[bold {tc}]╰─────────────────────────────────────────[/bold {tc}]")
             log.write("")
 
         parts = parse_content(content)
@@ -281,6 +364,42 @@ class MainScreen(Screen):
                 self._render_code(log, part["content"], part.get("language"))
 
         log.write("")
+
+    def _on_stream_chunk(self, chunk: Optional[str]):
+        """处理流式输出 chunk."""
+        streaming_output = self.query_one("#streaming_output", Static)
+
+        if chunk is None:
+            # 流式结束
+            self._streaming_active = False
+            self._streaming_buffer = ""
+            streaming_output.display = False
+            streaming_output.update("")
+            return
+
+        if not self._streaming_active:
+            self._streaming_active = True
+            self._streaming_buffer = ""
+            streaming_output.display = True
+
+        self._streaming_buffer += chunk
+        # 实时移除 thinking 标签，避免界面闪烁
+        display_text = re.sub(r"<thinking>.*?</thinking>", "", self._streaming_buffer, flags=re.DOTALL)
+        display_text = display_text.strip()
+        # 转义 Rich markup，避免未闭合标签导致渲染错误
+        display_text = display_text.replace("[", "[[")
+        # 预览区只保留最新 5 行
+        lines = display_text.split("\n")
+        if len(lines) > 5:
+            display_text = "\n".join(lines[-5:])
+        ai_label = self._get_ai_label()
+        if not display_text:
+            if self.config.ai.think_mode:
+                streaming_output.update("[italic #888888]Thinking...[/italic #888888]")
+            else:
+                streaming_output.update(f"[italic #888888]{ai_label} is typing...[/italic #888888]")
+        else:
+            streaming_output.update(f"[bold #58a6ff]{ai_label}:[/bold #58a6ff] {display_text}")
 
     def _add_system_message(self, content: str):
         log = self.query_one("#messages_log", RichLog)
@@ -312,8 +431,7 @@ class MainScreen(Screen):
             log.write(f"[bold #58a6ff][{tool_name}][/bold #58a6ff] [#888888]({line_count} lines, {char_count} chars) [use /setting tool_results_fold=false to expand][/#888888]")
         else:
             log.write(f"[bold #58a6ff][{tool_name}][/bold #58a6ff]")
-            display = result[:2000] + "\n... (output truncated)" if len(result) > 2000 else result
-            for line in display.split("\n"):
+            for line in result.split("\n"):
                 log.write(f"[#888888]{line}[/#888888]")
         log.write("")
 
@@ -321,10 +439,10 @@ class MainScreen(Screen):
         bottom_panel.display = True
         tool_log = self.query_one("#tool_result_log", RichLog)
         tool_log.clear()
-        tool_log.write(f"[bold #58a6ff][{tool_name}][/bold #58a6ff]")
-        display = result[:2000] + "\n... (output truncated)" if len(result) > 2000 else result
-        for line in display.split("\n"):
+        tool_log.write(f"[bold #58a6ff][{tool_name}] ({line_count} lines, {char_count} chars) ↑↓ scroll[/bold #58a6ff]")
+        for line in result.split("\n"):
             tool_log.write(f"[#888888]{line}[/#888888]")
+        tool_log.focus()
 
     def _render_diff(self, log: RichLog, diff: str):
         log.write("")
@@ -365,17 +483,49 @@ class MainScreen(Screen):
         content_type: str = "text",
         confirm_label: str = "确认"
     ) -> bool:
-        """显示确认对话框并等待用户确认."""
+        """显示确认对话框并等待用户确认.
+
+        push_screen_wait 必须在主线程调用。如果在主线程中直接调用；
+        如果在 worker 线程中，使用 call_from_thread 将 push_screen 派发到主线程，
+        并通过 on_dismiss 回调唤醒等待。
+        """
+        import threading
+
         log_debug(f"Showing confirmation dialog: {title} - {content[:100]}")
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[bool] = loop.create_future()
+
+        def on_dismiss(result: bool) -> None:
+            if not future.done():
+                future.set_result(bool(result))
+
         dialog = ConfirmationDialog(
             title=title,
             content=content,
             content_type=content_type,
             confirm_label=confirm_label,
             cancel_label="取消",
+            on_dismiss=on_dismiss,
         )
+
+        def show_dialog() -> None:
+            try:
+                self.app.push_screen(dialog)
+            except Exception as e:
+                log_debug(f"push_screen error: {type(e).__name__}: {e}")
+                if not future.done():
+                    future.set_result(False)
+
         try:
-            result = await self.app.push_screen_wait(dialog)
+            if threading.current_thread().ident == getattr(self.app, "_thread_id", None):
+                # 主线程中直接 push_screen
+                show_dialog()
+            else:
+                # worker 线程中通过 call_from_thread 安全推送对话框
+                # wait=False 避免阻塞主事件循环
+                self.app.call_from_thread(show_dialog, wait=False)
+            result = await future
             log_debug(f"Confirmation dialog result: {result}")
             return result
         except Exception as e:
@@ -388,24 +538,86 @@ class MainScreen(Screen):
             add_system_message=self._add_system_message,
             add_ai_message=self._add_ai_message,
             add_tool_result=self._add_tool_result,
+            stream_chunk=self._on_stream_chunk,
             confirm_action=self._confirm_action,
             show_diff_preview=lambda diff: self._render_diff(
                 self.query_one("#messages_log", RichLog), diff
             ),
         )
 
+    async def action_copy_last_message(self):
+        """复制最后一条 AI 消息到剪贴板."""
+        await self._copy_text(
+            self.chat_engine.history.get_copy_text(),
+            "最后一条 AI 消息",
+        )
+
+    async def action_show_copy_view(self):
+        """打开可复制文本查看弹窗."""
+        text = self.chat_engine.history.get_all_text() or self.chat_engine.history.get_copy_text()
+        dialog = CopyViewDialog(
+            title="复制视图（Ctrl+C 复制全部 · 鼠标滑动选择 · Esc 关闭）",
+            content=text,
+            export_directory=self.project_path,
+        )
+        await self.app.push_screen(dialog)
+
+    async def _copy_message_by_id(self, message_id: str):
+        """根据消息 ID 复制内容."""
+        await self._copy_text(
+            self.chat_engine.history.get_copy_text(message_id),
+            f"消息 {message_id}",
+            not_found_msg=f"未找到消息: {message_id}",
+        )
+
+    async def _copy_all_messages(self):
+        """复制完整聊天记录."""
+        await self._copy_text(
+            self.chat_engine.history.get_all_text(),
+            "完整聊天记录",
+        )
+
+    async def _copy_text(
+        self,
+        text: str,
+        label: str,
+        not_found_msg: str = "没有可复制的聊天记录",
+    ):
+        """通用复制逻辑：优先剪贴板，失败则导出到文件."""
+        if not text:
+            self._add_system_message(f"[bold yellow]{not_found_msg}[/bold yellow]")
+            return
+
+        try:
+            fallback_path = await copy_to_clipboard(text)
+            if fallback_path:
+                self._add_system_message(
+                    f"[bold yellow]剪贴板不可用，{label}已导出到文件并打开：{fallback_path}[/bold yellow]"
+                )
+            else:
+                self._add_system_message(f"[bold green]已复制{label}到剪贴板[/bold green]")
+        except Exception as e:
+            self._add_system_message(f"[bold red]复制失败: {e}[/bold red]")
+
     def _on_chat_send(self, content: str):
-        active_model = get_active_model(self.config)
-        if not active_model:
-            self._add_system_message("[bold yellow]No model selected.[/bold yellow] Use /model to configure.")
-            return
-        if not active_model.api_key:
-            self._add_system_message("[bold yellow]No API key configured.[/bold yellow] Use /model to edit.")
-            return
-        if self.config.ai.agent_mode:
-            self.run_worker(self._run_agent_cluster({"request": content}))
-        else:
-            self.run_worker(self.chat_engine.process_message(content, self._build_callbacks()))
+        async def _wrapped():
+            self.is_processing = True
+            try:
+                active_model = get_active_model(self.config)
+                if not active_model:
+                    self._add_system_message("[bold yellow]No model selected.[/bold yellow] Use /model to configure.")
+                    return
+                if not active_model.api_key:
+                    self._add_system_message("[bold yellow]No API key configured.[/bold yellow] Use /model to edit.")
+                    return
+                if self.config.ai.agent_mode:
+                    await self._run_agent_cluster({"request": content})
+                else:
+                    await self.chat_engine.process_message(content, self._build_callbacks())
+            finally:
+                self.is_processing = False
+
+        self.run_worker(_wrapped())
 
     def _on_command(self, action: str, data: Optional[Dict]):
         handlers = {
@@ -419,6 +631,10 @@ class MainScreen(Screen):
             "add_file": self._add_file_to_context,
             "show_diff": self._show_diff,
             "clear_chat": self._clear_chat,
+            "copy_message": self._on_copy_command,
+            "export_history": self._export_history,
+            "import_history": self._import_history,
+            "show_history": self._on_history_command,
             "undo": self._undo_last_change,
             "git_commit": self._git_commit,
             "show_status": self._show_status,
@@ -433,6 +649,103 @@ class MainScreen(Screen):
             if asyncio.iscoroutine(result):
                 self.run_worker(result)
 
+    async def _on_copy_command(self, data: Optional[Dict] = None):
+        """处理 /copy 命令."""
+        target = (data or {}).get("target", "last")
+        if target == "last":
+            await self.action_copy_last_message()
+        elif target == "all":
+            await self._copy_all_messages()
+        elif target == "view":
+            await self.action_show_copy_view()
+        elif target == "file":
+            await self._export_all_messages_to_file()
+        else:
+            await self._copy_message_by_id(target)
+
+    async def _export_all_messages_to_file(self):
+        """将完整聊天记录导出到项目目录文件."""
+        text = self.chat_engine.history.get_all_text()
+        if not text:
+            self._add_system_message("[bold yellow]没有可导出的聊天记录[/bold yellow]")
+            return
+        try:
+            path = await export_to_file(text, directory=self.project_path, prefix="hakimi_chat")
+            self._add_system_message(f"[bold green]已导出聊天记录到文件并打开：{path}[/bold green]")
+        except Exception as e:
+            self._add_system_message(f"[bold red]导出失败: {e}[/bold red]")
+
+    def _on_history_command(self, data: Optional[Dict] = None):
+        """处理 /history 命令."""
+        history = self.chat_engine.history
+        if not history.messages:
+            self._add_system_message("[bold yellow]暂无聊天记录[/bold yellow]")
+            return
+
+        lines = ["Chat history:", "-" * 40]
+        for msg in history.messages:
+            ts = msg.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+            preview = msg.content[:60].replace("\n", " ")
+            if len(msg.content) > 60:
+                preview += "..."
+            lines.append(f"  [{msg.id}] [{ts}] {msg.role}: {preview}")
+        lines.append("-" * 40)
+        lines.append(
+            "Use /copy <id> to copy a message, /copy last for latest AI, /copy all for full log, "
+            "/copy view for selectable view, /export [json|text] [path] to export, "
+            "/import <path> [--merge] to import."
+        )
+        self._add_system_message("\n".join(lines))
+
+    async def _export_history(self, data: Optional[Dict] = None):
+        """处理 /export 命令：导出聊天记录到文件."""
+        data = data or {}
+        fmt = data.get("format", "text")
+        path_str = data.get("path", "")
+
+        history = self.chat_engine.history
+        if not history.messages:
+            self._add_system_message("[bold yellow]没有可导出的聊天记录[/bold yellow]")
+            return
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        suffix = ".jsonl" if fmt == "jsonl" else ".txt"
+        default_name = f"hakimi_chat_{timestamp}{suffix}"
+
+        if path_str:
+            path = Path(path_str)
+            if not path.is_absolute():
+                path = self.project_path / path
+        else:
+            path = self.project_path / default_name
+
+        try:
+            exported = history.export_to(path, fmt=fmt)
+            self._add_system_message(f"[bold green]已导出聊天记录：{exported}[/bold green]")
+        except Exception as e:
+            self._add_system_message(f"[bold red]导出失败: {e}[/bold red]")
+
+    async def _import_history(self, data: Optional[Dict] = None):
+        """处理 /import 命令：从 JSONL 文件导入聊天记录."""
+        data = data or {}
+        path_str = data.get("path", "")
+        merge = data.get("merge", False)
+
+        if not path_str:
+            self._add_system_message("[bold red]用法: /import <path> [--merge][/bold red]")
+            return
+
+        path = Path(path_str)
+        if not path.is_absolute():
+            path = self.project_path / path
+
+        try:
+            count = self.chat_engine.history.import_from(path, merge=merge)
+            self._add_system_message(f"[bold green]已导入 {count} 条聊天记录[/bold green]")
+            self._load_and_show_history()
+        except Exception as e:
+            self._add_system_message(f"[bold red]导入失败: {e}[/bold red]")
+
     def _show_settings(self):
         ai = self.config.ai
         lines = [
@@ -441,6 +754,9 @@ class MainScreen(Screen):
             f"  think_mode:               {ai.think_mode}",
             f"  think_fold:               {ai.think_fold}",
             f"  temperature:              {ai.temperature}",
+            f"  max_context_messages:     {ai.max_context_messages}",
+            f"  context_ttl_hours:        {ai.context_ttl_hours or '(disabled)'}",
+            f"  save_chat_history:        {ai.save_chat_history}",
             f"  show_tool_results:        {ai.show_tool_results}",
             f"  tool_results_fold:        {ai.tool_results_fold}",
             f"  markdown_render:          {ai.markdown_render}",
@@ -473,6 +789,14 @@ class MainScreen(Screen):
             ai.think_fold = value
         elif key == "temperature":
             ai.temperature = value
+        elif key == "max_context_messages":
+            ai.max_context_messages = max(2, min(200, value))
+            self.chat_engine.history.max_context_messages = ai.max_context_messages
+        elif key == "context_ttl_hours":
+            ai.context_ttl_hours = value if value is None or value > 0 else None
+            self.chat_engine.history.context_ttl_hours = ai.context_ttl_hours
+        elif key == "save_chat_history":
+            ai.save_chat_history = value
         elif key == "show_tool_results":
             ai.show_tool_results = value
         elif key == "tool_results_fold":
@@ -618,11 +942,23 @@ class MainScreen(Screen):
     def _show_diff(self, data: Optional[Dict] = None):
         self._add_system_message("Diff: (not implemented in chat view)")
 
-    def _clear_chat(self):
+    async def _clear_chat(self):
+        """清空聊天记录（带确认）."""
+        if self.chat_engine.history.messages:
+            confirmed = await self._confirm_action(
+                title="清空聊天记录",
+                content="确定要清空当前会话的所有聊天记录吗？此操作不可恢复。",
+                content_type="text",
+                confirm_label="清空",
+            )
+            if not confirmed:
+                self._add_system_message("[bold yellow]已取消清空[/bold yellow]")
+                return
+
         self.chat_engine.clear_history()
         log = self.query_one("#messages_log", RichLog)
         log.clear()
-        self._add_system_message("Chat cleared.")
+        self._add_system_message("[bold green]聊天记录已清空[/bold green]")
 
     def _undo_last_change(self):
         self._add_system_message("Undo not yet implemented")

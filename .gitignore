@@ -27,3 +27,7 @@ Thumbs.db
 # Env
 .env
 .env.local
+
+# Hakimi Codex local data
+.hakimi/
+*.chat_history.jsonl
