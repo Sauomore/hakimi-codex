@@ -16,6 +16,8 @@ from .prompts import build_system_prompt
 from .tools import ToolExecutor, ToolResult, ToolResultStatus
 from .tool_parser import parse_tool_calls
 from .diff_utils import generate_unified_diff
+from .code_block_applier import apply_code_blocks
+from .token_tracker import TokenTracker
 from ..utils.logger import debug as log_debug
 
 
@@ -52,6 +54,7 @@ class ChatEngine:
         self.config = config
         self.llm_client: Optional[LLMClient] = None
         self.tool_executor = ToolExecutor(str(self.project_path))
+        self.token_tracker = TokenTracker(self.project_path)
         self.history = ChatHistory(
             self.project_path,
             max_context_messages=config.ai.max_context_messages,
@@ -80,9 +83,105 @@ class ChatEngine:
         """清空对话历史."""
         self.history.clear()
 
+    async def retry_last_response(self, callbacks: ChatCallbacks) -> bool:
+        """重新生成最后一条 AI 回复.
+
+        移除历史中的最后一条 assistant 消息，基于上一条 user 消息重新调用 LLM。
+        返回是否成功触发重试。
+        """
+        last_user = self.history.get_last_message("user")
+        if not last_user:
+            callbacks.add_system_message("[bold yellow]没有可重试的用户消息[/bold yellow]")
+            return False
+
+        # 移除最后一条 assistant 消息（如果存在）
+        self.history.pop_last("assistant")
+
+        active_model = get_active_model(self.config)
+        if not active_model:
+            callbacks.add_system_message("[bold yellow]No model selected.[/bold yellow] Use /model to configure.")
+            return False
+        if not active_model.api_key:
+            callbacks.add_system_message("[bold yellow]No API key configured.[/bold yellow] Use /model to edit.")
+            return False
+
+        if not self.llm_client or self.llm_client.model.id != active_model.id:
+            await self.close()
+            self.llm_client = LLMClient(active_model, think_mode=self.config.ai.think_mode)
+
+        await self._call_llm_and_respond(callbacks)
+        return True
+
+    async def _call_llm_and_respond(self, callbacks: ChatCallbacks) -> None:
+        """基于当前历史调用 LLM 并添加 assistant 回复（不带工具循环）."""
+        try:
+            api_messages = self._history_api_messages()
+            system_prompt = build_system_prompt(self.project_path)
+            full_response = ""
+            thinking_content = ""
+
+            if callbacks.stream_chunk:
+                callbacks.stream_chunk("")
+
+            worker = get_current_worker()
+            async for chunk in self.llm_client.chat(
+                api_messages,
+                system_prompt=system_prompt,
+                stream=self.config.ai.stream
+            ):
+                if worker.is_cancelled:
+                    break
+                full_response += chunk
+                if callbacks.stream_chunk:
+                    callbacks.stream_chunk(chunk)
+
+            if worker.is_cancelled:
+                return
+
+            if callbacks.stream_chunk:
+                callbacks.stream_chunk(None)
+
+            thinking_content = self._extract_thinking(full_response)
+            full_response = self._strip_thinking_tags(full_response)
+
+            if self.llm_client and self.llm_client.last_finish_reason == "length":
+                callbacks.add_system_message(
+                    "[bold yellow]Response truncated by max_tokens. "
+                    "Increase the model's max_tokens in ~/.config/hakimi/config.toml "
+                    "or ask for a shorter file.[/bold yellow]"
+                )
+
+            self._accumulate_token_usage()
+            usage_msg = self.token_tracker.format_last_usage()
+            if usage_msg:
+                callbacks.add_system_message(usage_msg)
+
+            msg = self.history.add("assistant", full_response, thinking=thinking_content or None)
+            callbacks.add_ai_message(full_response, thinking_content if thinking_content else None, msg.id)
+
+            await apply_code_blocks(
+                full_response,
+                self.tool_executor,
+                callbacks,
+                confirm_write_file=self.config.ai.confirm_write_file,
+            )
+        except Exception as e:
+            callbacks.add_system_message(f"[bold red]Error: {str(e)}[/bold red]")
+
     def _history_api_messages(self) -> List[Dict[str, str]]:
         """根据配置返回裁剪后的上下文消息."""
         return self.history.get_context_messages()
+
+    def _accumulate_token_usage(self) -> None:
+        """累计最近一次 LLM 调用的 token 使用量."""
+        if not self.llm_client:
+            return
+        usage = self.llm_client.last_usage
+        if not usage:
+            return
+        model = self.llm_client.model
+        self.token_tracker.add_usage(model, usage)
+        log_debug(f"accumulated token usage: {self.token_tracker.session_usage}")
 
     async def process_message(self, content: str, callbacks: ChatCallbacks) -> None:
         """处理一条用户消息."""
@@ -131,6 +230,9 @@ class ChatEngine:
                 if callbacks.stream_chunk:
                     callbacks.stream_chunk(None)
 
+                self._accumulate_token_usage()
+                usage_msg = self.token_tracker.format_last_usage()
+
                 thinking_content = self._extract_thinking(full_response)
                 full_response = self._strip_thinking_tags(full_response)
 
@@ -158,8 +260,18 @@ class ChatEngine:
                             "or ask for a shorter file.[/bold yellow]"
                         )
 
+                    if usage_msg:
+                        callbacks.add_system_message(usage_msg)
+
                     msg = self.history.add("assistant", full_response, thinking=thinking_content or None)
                     callbacks.add_ai_message(full_response, thinking_content if thinking_content else None, msg.id)
+
+                    await apply_code_blocks(
+                        full_response,
+                        self.tool_executor,
+                        callbacks,
+                        confirm_write_file=self.config.ai.confirm_write_file,
+                    )
                     break
                 else:
                     self.history.add("assistant", full_response)

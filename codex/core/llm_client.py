@@ -17,6 +17,7 @@ class LLMClient:
         self.model = model
         self.think_mode = think_mode
         self.last_finish_reason: Optional[str] = None
+        self.last_usage: Dict[str, int] = {}
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(120.0, connect=30.0),
             headers=self._get_headers()
@@ -128,6 +129,10 @@ class LLMClient:
                                 break
                             try:
                                 chunk = json.loads(data)
+                                usage = chunk.get("usage")
+                                if usage:
+                                    self.last_usage = usage
+                                    log_debug(f"usage: {usage}")
                                 choice = chunk.get("choices", [{}])[0]
                                 finish_reason = choice.get("finish_reason")
                                 if finish_reason:
@@ -151,6 +156,10 @@ class LLMClient:
                 response.raise_for_status()
                 data = response.json()
                 log_debug(f"response body: {json.dumps(data, ensure_ascii=False)[:1000]}")
+                usage = data.get("usage")
+                if usage:
+                    self.last_usage = usage
+                    log_debug(f"usage: {usage}")
                 choice = data.get("choices", [{}])[0]
                 self.last_finish_reason = choice.get("finish_reason")
                 if self.last_finish_reason:
@@ -206,6 +215,9 @@ class LLMClient:
                             data = line[6:]
                             try:
                                 chunk = json.loads(data)
+                                usage = chunk.get("usage")
+                                if usage:
+                                    self.last_usage = usage
                                 if chunk.get("type") == "content_block_delta":
                                     content = chunk.get("delta", {}).get("text", "")
                                     if content:
@@ -216,6 +228,9 @@ class LLMClient:
                 response = await self.client.post(url, json=payload)
                 response.raise_for_status()
                 data = response.json()
+                usage = data.get("usage")
+                if usage:
+                    self.last_usage = usage
                 content = data.get("content", [{}])[0].get("text", "")
                 yield content
                 

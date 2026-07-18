@@ -41,6 +41,9 @@ def _migrate_from_legacy(data: dict) -> dict:
         if section_data:
             data[section] = section_data
 
+    # 移除已废弃的计费相关字段，避免新版模型校验失败
+    data.get("ai", {}).pop("token_prices", None)
+
     return data
 
 

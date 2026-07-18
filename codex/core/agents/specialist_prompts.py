@@ -42,11 +42,15 @@ Example:
 {{"tool": "list_directory", "parameters": {{"dir_path": "."}}}}
 ```
 
-You may make multiple tool calls in one response by returning multiple ```tool blocks.
-You MUST NOT invent tools that are not listed above.
-You MUST NOT wrap file content inside Markdown code blocks in write_file content.
-You MUST NOT read large files (e.g. *.log, binaries, assets) unless explicitly required. For logs use read_file with a small limit.
-You MUST NOT delete existing source files. Only create new files or overwrite files that are part of the current task.
+CRITICAL:
+- read_file MUST include the "file_path" parameter: {{"tool": "read_file", "parameters": {{"file_path": "hello.py"}}}}
+- write_file MUST include "file_path" and "content": {{"tool": "write_file", "parameters": {{"file_path": "hello.py", "content": "print('hi')"}}}}
+- If a tool call fails with a parameter error, STOP and fix the parameters instead of continuing with more broken calls.
+- You may make multiple tool calls in one response by returning multiple ```tool blocks.
+- You MUST NOT invent tools that are not listed above.
+- You MUST NOT wrap file content inside Markdown code blocks in write_file content.
+- You MUST NOT read large files (e.g. *.log, binaries, assets) unless explicitly required. For logs use read_file with a small limit.
+- You MUST NOT delete existing source files. Only create new files or overwrite files that are part of the current task.
 """
 
     if role == AgentRole.CODER:
@@ -84,8 +88,9 @@ Responsibilities:
 Rules:
 1. Do NOT write files yourself.
 2. Do NOT execute code or run commands (do not use execute_code or execute_command).
-3. Only read/analyze and output the plan in structured text (bullet list).
-4. Keep the plan short and actionable.
+3. You may use ONLY these two tools for analysis: list_directory and analyze_project. Do NOT use read_file or search_files.
+4. Output the plan in structured text (bullet list) only.
+5. Keep the plan short and actionable.
 """
 
     if role == AgentRole.REVIEWER:

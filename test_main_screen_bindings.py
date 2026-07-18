@@ -6,9 +6,11 @@ from codex.ui.screens.copy_view_dialog import CopyViewDialog
 
 def test_bindings():
     keys = {b[0] for b in MainScreen.BINDINGS}
+    actions = {b[0]: b[1] for b in MainScreen.BINDINGS}
     assert "f5" in keys, f"missing f5: {keys}"
     assert "f6" in keys, f"missing f6: {keys}"
     assert "ctrl+c" in keys, f"missing ctrl+c: {keys}"
+    assert actions.get("ctrl+c") == "confirm_quit", f"ctrl+c should trigger confirm_quit, got {actions.get('ctrl+c')}"
     print("MainScreen bindings test passed")
 
 

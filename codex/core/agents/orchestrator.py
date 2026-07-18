@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -15,6 +16,7 @@ from .models import AgentRole, AgentResult, AgentTask
 ProgressCallback = Callable[[str], None]
 StatusCallback = Callable[[Dict[str, str]], None]
 ConfirmCallback = Optional[Callable[..., Awaitable[bool]]]
+PlanReviewCallback = Optional[Callable[[str], Awaitable[Optional[str]]]]
 
 
 class Orchestrator:
@@ -28,6 +30,7 @@ class Orchestrator:
         progress_callback: ProgressCallback = None,
         status_callback: StatusCallback = None,
         confirm_callback: ConfirmCallback = None,
+        plan_review_callback: PlanReviewCallback = None,
     ):
         self.project_path = Path(project_path).resolve()
         self.config = config
@@ -35,6 +38,7 @@ class Orchestrator:
         self.progress_callback = progress_callback or (lambda _: None)
         self.status_callback = status_callback or (lambda _: None)
         self.confirm_callback = confirm_callback
+        self.plan_review_callback = plan_review_callback
 
     def _build_system_prompt(self) -> str:
         return f"""You are the Orchestrator agent in Hakimi Codex.
@@ -89,10 +93,11 @@ Rules:
             ):
                 full_response += chunk
 
-            decision = self._parse_decision(full_response)
+            thinking_content, stripped_response = extract_thinking_tags(full_response)
+            decision = self._parse_decision(stripped_response)
             if not decision.get("needs_coder"):
                 self.status_callback({"agent": "-", "model": "-", "state": "idle"})
-                return full_response.strip()
+                return stripped_response.strip()
 
             return await self._run_pipeline(user_input)
 
@@ -116,7 +121,21 @@ Rules:
             planner_model,
         )
         results.append(plan_result)
-        plan = plan_result.output if plan_result.success else "(plan failed)"
+        if not plan_result.success:
+            self.status_callback({"agent": "-", "model": "-", "state": "idle"})
+            return self._format_pipeline_results(results, user_input)
+        plan = plan_result.output
+
+        # 用户确认 / 修改计划
+        if self.plan_review_callback:
+            self.progress_callback(
+                f"Agent Planner: plan ready ({plan_result.duration or 0:.1f}s), waiting for approval..."
+            )
+            reviewed_plan = await self.plan_review_callback(plan)
+            if reviewed_plan is None:
+                self.status_callback({"agent": "-", "model": "-", "state": "idle"})
+                return "Agent 流水线已取消（计划未通过审核）。"
+            plan = reviewed_plan
 
         # Coder
         coder_model = self._get_model_for_role(AgentRole.CODER)
@@ -130,7 +149,13 @@ Rules:
             coder_model,
         )
         results.append(coder_result)
-        code_output = coder_result.output if coder_result.success else "(implementation failed)"
+        if not coder_result.success:
+            self.status_callback({"agent": "-", "model": "-", "state": "idle"})
+            return self._format_pipeline_results(results, user_input)
+        code_output = coder_result.output
+        self.progress_callback(
+            f"Agent Coder: completed in {coder_result.duration or 0:.1f}s"
+        )
 
         # 检查 coder 是否实际生成了源码文件（支持多种文件类型）
         source_extensions = {".py", ".html", ".htm", ".js", ".ts", ".css", ".java", ".cpp", ".c", ".go", ".rs", ".rb", ".php", ".swift", ".kt", ".scala"}
@@ -138,7 +163,7 @@ Rules:
             f for f in self.project_path.iterdir()
             if f.is_file() and f.suffix.lower() in source_extensions and not f.name.startswith("test_")
         ]
-        if not source_files and coder_result.success:
+        if not source_files:
             coder_result = AgentResult(
                 role=AgentRole.CODER,
                 success=False,
@@ -146,7 +171,8 @@ Rules:
                 error="no_source_files",
             )
             results[-1] = coder_result
-            code_output = "(implementation failed)"
+            self.status_callback({"agent": "-", "model": "-", "state": "idle"})
+            return self._format_pipeline_results(results, user_input)
 
         # Reviewer
         reviewer_model = self._get_model_for_role(AgentRole.REVIEWER)
@@ -165,6 +191,9 @@ Rules:
             reviewer_model,
         )
         results.append(reviewer_result)
+        self.progress_callback(
+            f"Agent Reviewer: {'completed' if reviewer_result.success else 'failed'} in {reviewer_result.duration or 0:.1f}s"
+        )
 
         # Tester
         if self.config.ai.agent_run_tests:
@@ -183,6 +212,9 @@ Rules:
                 tester_model,
             )
             results.append(tester_result)
+            self.progress_callback(
+                f"Agent Tester: {'completed' if tester_result.success else 'failed'} in {tester_result.duration or 0:.1f}s"
+            )
 
         self.status_callback({"agent": "-", "model": "-", "state": "idle"})
         return self._format_pipeline_results(results, user_input)
@@ -194,7 +226,7 @@ Rules:
     async def _run_agent(
         self, role: AgentRole, instruction: str, model: Optional[ModelConfig] = None
     ) -> AgentResult:
-        """运行单个 Specialist."""
+        """运行单个 Specialist，并记录耗时."""
         model = model or self._get_model_for_role(role)
         runner = AgentRunner(
             role=role,
@@ -203,7 +235,10 @@ Rules:
             model=model,
             confirm_callback=self.confirm_callback,
         )
-        return await runner.run(AgentTask(role=role, instruction=instruction))
+        start = time.time()
+        result = await runner.run(AgentTask(role=role, instruction=instruction))
+        result.duration = time.time() - start
+        return result
 
     def _parse_decision(self, text: str) -> Dict[str, Any]:
         """解析 Orchestrator 的调度决定."""
@@ -233,7 +268,8 @@ Rules:
 
         for result in results:
             status = "[bold green]OK[/bold green]" if result.success else "[bold red]FAIL[/bold red]"
-            lines.append(f"[{status}] {result.role.value}")
+            duration_text = f" ({result.duration:.1f}s)" if result.duration else ""
+            lines.append(f"[{status}] {result.role.value}{duration_text}")
 
             # 显示 thinking 内容（如果有）
             if result.thinking and self.config.ai.think_mode:

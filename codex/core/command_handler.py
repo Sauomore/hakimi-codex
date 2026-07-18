@@ -29,10 +29,15 @@ class CommandHandler:
         "/export": ("导出聊天记录到文件", "[json|text] [path]", "/export\n/export text\n/export json ./backup/chat.jsonl"),
         "/import": ("从 JSONL 文件导入聊天记录", "<path> [--merge]", "/import ./backup/chat.jsonl\n/import ./backup/chat.jsonl --merge"),
         "/history": ("显示聊天记录列表", "", "/history"),
+        "/search": ("搜索聊天记录", "<keyword>", "/search 报错"),
+        "/codeblocks": ("打开代码块操作面板", "", "/codeblocks"),
+        "/retry": ("重新生成最后一条 AI 回复", "", "/retry"),
+        "/compare": ("多模型并发对比", "<model_ids> <prompt>", "/compare deepseek-v3,gpt-4o 写快排"),
         "/undo": ("撤销最后一次 AI 修改", "", "/undo"),
         "/commit": ("提交当前更改到 Git", "[message]", "/commit\n/commit 'fix: bug'"),
         "/status": ("显示 Git 状态和项目信息", "", "/status"),
         "/run": ("执行 Shell 命令", "<command>", "/run python -m pytest"),
+        "/git": ("执行任意 Git 命令", "<git args>", "/git status\n/git log --oneline -5\n/git push"),
         "/agent": ("多 Agent 协作模式控制", "[on|off|status|test on|off|model <role> <id>]", "/agent on"),
         "/about": ("显示 Hakimi CLI 详细信息", "", "/about"),
         "/exit": ("退出应用", "", "/exit"),
@@ -147,6 +152,37 @@ class CommandHandler:
         elif cmd == "/history":
             return CommandResult(True, "", action="show_history")
 
+        elif cmd == "/search":
+            keyword = args.strip()
+            if not keyword:
+                return CommandResult(True, "", action="show_search_dialog")
+            return CommandResult(True, f"搜索: {keyword}", action="search_history", data={"keyword": keyword})
+
+        elif cmd == "/codeblocks":
+            return CommandResult(True, "", action="show_code_blocks")
+
+        elif cmd == "/retry":
+            return CommandResult(True, "", action="retry_last_response")
+
+        elif cmd == "/compare":
+            parts = args.strip().split(None, 1)
+            if len(parts) < 2:
+                return CommandResult(
+                    False,
+                    "用法: /compare <model_ids> <prompt>\n"
+                    "示例: /compare deepseek-v3,gpt-4o 写快排"
+                )
+            model_ids = [m.strip() for m in parts[0].split(",") if m.strip()]
+            prompt = parts[1]
+            if not model_ids or not prompt:
+                return CommandResult(False, "用法: /compare <model_ids> <prompt>")
+            return CommandResult(
+                True,
+                f"对比模型: {', '.join(model_ids)}",
+                action="compare_models",
+                data={"model_ids": model_ids, "prompt": prompt},
+            )
+
         elif cmd == "/undo":
             return CommandResult(True, "已撤销最后一次修改", action="undo")
         
@@ -158,6 +194,11 @@ class CommandHandler:
         
         elif cmd == "/run":
             return CommandResult(True, f"执行: {args}", action="run_command", data={"command": args})
+
+        elif cmd == "/git":
+            if not args.strip():
+                return CommandResult(False, "用法: /git <git 命令参数>\n示例: /git status\n      /git log --oneline -5")
+            return CommandResult(True, f"git {args}", action="run_git_command", data={"args": args})
         
         elif cmd == "/agent":
             return self._handle_agent(args)
@@ -178,10 +219,10 @@ class CommandHandler:
     def _handle_help(self, args: str) -> CommandResult:
         """处理 /help 命令."""
         sections = {
-            "聊天与会话": ["/help", "/clear", "/history", "/copy", "/export", "/import", "/undo"],
+            "聊天与会话": ["/help", "/clear", "/history", "/search", "/codeblocks", "/retry", "/copy", "/export", "/import", "/undo"],
             "模型与配置": ["/model", "/setting", "/agent"],
             "上下文与工具": ["/file", "/diff", "/run"],
-            "Git 与项目": ["/commit", "/status"],
+            "Git 与项目": ["/commit", "/status", "/git"],
             "系统": ["/about", "/exit"],
         }
 
@@ -279,11 +320,13 @@ class CommandHandler:
             # 显示当前设置
             return CommandResult(True, "", action="show_settings")
         
+        stripped = args.strip()
+
         # 解析 key=value
-        match = re.match(r"(\w+)\s*=\s*(.+)", args.strip())
+        match = re.match(r"(\w+)\s*=\s*(.+)", stripped)
         if not match:
             # 尝试只显示某个设置
-            key = args.strip()
+            key = stripped
             if key in self.SETTING_KEYS:
                 return CommandResult(True, "", action="get_setting", data={"key": key})
             return CommandResult(False, "格式错误。使用: /setting key=value\n输入 /help 查看设置项")

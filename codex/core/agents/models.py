@@ -34,3 +34,4 @@ class AgentResult:
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     error: Optional[str] = None
     thinking: Optional[str] = None
+    duration: Optional[float] = None

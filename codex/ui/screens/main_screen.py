@@ -2,19 +2,21 @@
 
 import asyncio
 import re
+import shlex
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.containers import Vertical, Horizontal
-from textual.widgets import Static, Button, RichLog, TextArea
+from textual.widgets import Static, Button, RichLog, TextArea, Tree
 from textual.reactive import reactive
 
 from rich.markdown import Markdown
 from rich.syntax import Syntax
 from rich.text import Text
+from rich.table import Table
 
 from codex import __version__, __author__
 from codex.core.models import AppConfig, ModelConfig, ProviderType
@@ -28,15 +30,21 @@ from codex.core.config import (
 )
 from codex.core.llm_client import LLMClient
 from codex.core import git_utils
+from codex.core.prompts import build_system_prompt
 from codex.core.tools import ToolExecutor, ToolResultStatus
 from codex.core.command_handler import CommandHandler, CommandResult
 from codex.core.chat_engine import ChatEngine, ChatCallbacks
 from codex.core.agents import Orchestrator
+from codex.core.diff_utils import generate_unified_diff
 from codex.utils.markdown import parse_content
 from codex.utils.logger import setup_logger, debug as log_debug
 from codex.utils.clipboard import copy_to_clipboard, export_to_file
+from codex.core.code_block_applier import CodeBlock, extract_code_blocks, detect_target_file_path
 from .confirmation_dialog import ConfirmationDialog
 from .copy_view_dialog import CopyViewDialog
+from .plan_review_dialog import PlanReviewDialog
+from .search_dialog import SearchDialog, SearchResult
+from .code_block_dialog import CodeBlockDialog
 
 
 class ChatInput(TextArea):
@@ -51,11 +59,18 @@ class ChatInput(TextArea):
             self.insert("\n")
             return
 
-        # 让 Ctrl+C 退出应用，避免被 TextArea 默认 copy 占用
+        # 让 Ctrl+C 弹出退出确认框，避免被 TextArea 默认 copy 占用
         if event.key == "ctrl+c":
             event.prevent_default()
             event.stop()
-            self.screen.action_quit()
+            self.screen.action_confirm_quit()
+            return
+
+        # Ctrl+F 打开聊天记录搜索
+        if event.key == "ctrl+f":
+            event.prevent_default()
+            event.stop()
+            self.screen.action_show_search()
             return
 
         if event.key == "up":
@@ -89,7 +104,10 @@ class MainScreen(Screen):
     BINDINGS = [
         ("f5", "copy_last_message", "Copy last message"),
         ("f6", "show_copy_view", "Show copy view"),
-        ("ctrl+c", "quit", "Quit"),
+        ("f7", "show_code_blocks", "Code blocks"),
+        ("ctrl+f", "show_search", "Search"),
+        ("ctrl+r", "retry_last_response", "Retry last"),
+        ("ctrl+c", "confirm_quit", "Quit"),
     ]
 
     def __init__(self, project_path: str = ".", **kwargs):
@@ -99,6 +117,8 @@ class MainScreen(Screen):
         self.input_history_index = -1
         self._streaming_buffer = ""
         self._streaming_active = False
+        self._code_blocks: List[CodeBlock] = []
+        self._last_ai_content: str = ""
         super().__init__(**kwargs)
         self.chat_engine = ChatEngine(str(self.project_path), self.config)
 
@@ -107,6 +127,7 @@ class MainScreen(Screen):
             with Vertical(id="left_sidebar"):
                 yield Static("Project", classes="sidebar_title", id="sidebar_title_project")
                 yield Static(id="project_info")
+                yield Tree(self.project_path.name, id="file_tree")
                 yield Static("Model", classes="sidebar_title", id="sidebar_title_model")
                 yield Static(id="model_info")
                 yield Static("Agent Cluster", classes="sidebar_title", id="sidebar_title_agent")
@@ -132,7 +153,7 @@ class MainScreen(Screen):
                 yield ChatInput(id="chat_input")
                 yield Button("Send", id="send_button")
             yield Static(
-                "Enter newline · F5 copy last · F6 copy view · Ctrl+C exit · /help",
+                "Enter newline · F5 copy · F6 view · F7 blocks · Ctrl+F search · Ctrl+C exit · /help",
                 id="input_hint",
             )
 
@@ -141,6 +162,7 @@ class MainScreen(Screen):
         self.chat_engine.config = self.config
         setup_logger(self.project_path, self.config.ai.debug_mode)
         self._update_sidebar()
+        self._populate_file_tree()
         self._update_runtime_status({"agent": "-", "model": "-", "state": "idle"})
 
         streaming_output = self.query_one("#streaming_output", Static)
@@ -255,13 +277,18 @@ class MainScreen(Screen):
         active_model = get_active_model(self.config)
         if active_model:
             provider_label = self._format_provider_name(active_model.provider)
+            tracker = self.chat_engine.token_tracker
+            token_line = f"tokens:{tracker.session_usage.total}"
+            today_line = f"today:{tracker.today_usage.total}"
             model_info.update(
                 f"[bold]{active_model.name}[/bold]\n"
                 f"{provider_label}\n"
-                f"max:{active_model.max_tokens}"
+                f"max:{active_model.max_tokens}\n"
+                f"{token_line}\n"
+                f"{today_line}"
             )
         else:
-            model_info.update("[bold yellow]none[/bold yellow]\n-\n-")
+            model_info.update("[bold yellow]none[/bold yellow]\n-\n-\n-\n-")
 
         ai = self.config.ai
         mode_color = "bold green" if ai.agent_mode else "bold #888888"
@@ -281,10 +308,81 @@ class MainScreen(Screen):
             "Enter newline\n"
             "F5 copy last AI\n"
             "F6 copy view\n"
+            "F7 code blocks\n"
+            "Ctrl+F search\n"
+            "Ctrl+R retry\n"
             "Ctrl+C exit\n"
             "Up/Down history\n"
             "/help commands"
         )
+
+    def _populate_file_tree(self):
+        """加载项目文件树到侧边栏."""
+        try:
+            tree = self.query_one("#file_tree", Tree)
+        except Exception:
+            return
+        tree.show_root = False
+        tree.guide_depth = 2
+        tree.root.remove_children()
+        self._build_file_tree(tree.root, self.project_path)
+
+    def _is_ignored_path(self, path: Path) -> bool:
+        """判断文件树中是否应该忽略的路径."""
+        ignored_names = {
+            ".git", "__pycache__", "node_modules", ".venv", "venv",
+            ".hakimi", ".env", ".idea", ".vscode", "dist", "build",
+            ".pytest_cache", ".mypy_cache", ".coverage", ".gitattributes",
+        }
+        name = path.name
+        if name in ignored_names:
+            return True
+        if name.endswith(".pyc"):
+            return True
+        if name == "hakimi_debug.log":
+            return True
+        return False
+
+    def _build_file_tree(self, parent, path: Path):
+        """递归构建文件树节点."""
+        try:
+            entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        except (PermissionError, OSError):
+            return
+
+        for entry in entries:
+            if self._is_ignored_path(entry):
+                continue
+            if entry.is_dir():
+                node = parent.add(f"📁 {entry.name}", data=entry)
+                node.allow_expand = True
+            else:
+                node = parent.add_leaf(f"📄 {entry.name}", data=entry)
+                node.allow_expand = False
+
+    def on_tree_node_expanded(self, event: Tree.NodeExpanded):
+        """目录展开时动态加载子节点."""
+        node = event.node
+        data = node.data
+        if not data or not isinstance(data, Path):
+            return
+        if not data.is_dir():
+            return
+        node.remove_children()
+        self._build_file_tree(node, data)
+
+    def on_tree_node_selected(self, event: Tree.NodeSelected):
+        """点击文件时添加到上下文."""
+        node = event.node
+        data = node.data
+        if not data or not isinstance(data, Path):
+            return
+        if data.is_file():
+            try:
+                rel_path = data.relative_to(self.project_path).as_posix()
+            except ValueError:
+                rel_path = str(data)
+            self._add_file_to_context({"path": rel_path})
 
     def _load_and_show_history(self):
         """加载历史记录并渲染到消息区."""
@@ -340,6 +438,9 @@ class MainScreen(Screen):
         ai_label = self._get_ai_label()
         log.write(self._message_header(ai_label, self.config.ui.output_color, msg_id))
 
+        # 防御性过滤：确保内容中不再残留 thinking 标签
+        content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL)
+
         if thinking and self.config.ai.think_mode:
             if self.config.ai.think_fold:
                 log.write(f"[#888888]Thinking... (use /setting think_fold=false to expand)[/#888888]")
@@ -351,6 +452,9 @@ class MainScreen(Screen):
                 log.write(f"[bold {tc}]╰─────────────────────────────────────────[/bold {tc}]")
             log.write("")
 
+        self._last_ai_content = content
+        self._code_blocks = extract_code_blocks(content)
+        code_block_iter = iter(self._code_blocks)
         parts = parse_content(content)
         for part in parts:
             if part["type"] == "text":
@@ -361,7 +465,11 @@ class MainScreen(Screen):
             elif part["type"] == "diff":
                 self._render_diff(log, part["content"])
             elif part["type"] == "code":
-                self._render_code(log, part["content"], part.get("language"))
+                try:
+                    block = next(code_block_iter)
+                except StopIteration:
+                    block = None
+                self._render_code(log, part["content"], part.get("language"), block)
 
         log.write("")
 
@@ -418,6 +526,11 @@ class MainScreen(Screen):
             # 普通文本，用灰色显示
             log.write(f"[#aaaaaa]{content}[/#aaaaaa]")
 
+    def _on_add_system_message(self, data: Dict):
+        """通过命令动作添加系统消息."""
+        content = data.get("message", "") if data else ""
+        self._add_system_message(content)
+
     def _add_tool_result(self, tool_name: str, result: str):
         if not self.config.ai.show_tool_results:
             return
@@ -446,32 +559,145 @@ class MainScreen(Screen):
 
     def _render_diff(self, log: RichLog, diff: str):
         log.write("")
-        log.write("[bold #e0e0e0]--- diff[/bold #e0e0e0]")
+        log.write(Text("--- diff", style="bold #e0e0e0"))
         for line in diff.split("\n"):
             if line.startswith("+"):
-                log.write(f"[bold #3fb950]{line}[/bold #3fb950]")
+                style = "bold #3fb950"
             elif line.startswith("-"):
-                log.write(f"[bold #f85149]{line}[/bold #f85149]")
+                style = "bold #f85149"
             elif line.startswith("@@"):
-                log.write(f"[#888888]{line}[/#888888]")
+                style = "#888888"
             else:
-                log.write(f"[#aaaaaa]{line}[/#aaaaaa]")
-        log.write("[bold #e0e0e0]---[/bold #e0e0e0]")
+                style = "#aaaaaa"
+            log.write(Text(line, style=style))
+        log.write(Text("---", style="bold #e0e0e0"))
         log.write("")
 
-    def _render_code(self, log: RichLog, code: str, lang: Optional[str] = None):
+    def _show_diff_preview(self, diff: str, file_path: Optional[str] = None):
+        """在消息区显示 diff 预览."""
+        log = self.query_one("#messages_log", RichLog)
+        header = f"检测到文件修改建议: {file_path}" if file_path else "diff 预览"
         log.write("")
+        log.write(Text(header, style="bold #58a6ff"))
+        self._render_diff(log, diff)
+
+    def _search_callback(self, keyword: str) -> List[SearchResult]:
+        """聊天记录搜索回调，返回给 SearchDialog 的结果."""
+        results: List[SearchResult] = []
+        for msg in self.chat_engine.history.search(keyword):
+            preview = msg.content[:80].replace("\n", " ")
+            if len(msg.content) > 80:
+                preview += "..."
+            results.append(
+                SearchResult(
+                    message_id=msg.id,
+                    role=msg.role,
+                    timestamp=msg.timestamp,
+                    preview=preview,
+                )
+            )
+        return results
+
+    def action_show_search(self):
+        """打开聊天记录搜索对话框."""
+        dialog = SearchDialog(search_callback=self._search_callback)
+        self.app.push_screen(dialog)
+
+    def action_show_code_blocks(self):
+        """打开代码块操作对话框."""
+        if not self._code_blocks:
+            self._add_system_message("[italic #888888]当前没有可操作的代码块[/italic #888888]")
+            return
+        dialog = CodeBlockDialog(
+            code_blocks=self._code_blocks,
+            full_content=self._last_ai_content,
+            project_path=self.project_path,
+            on_copy=self._copy_code_block,
+            on_insert=self._insert_code_block,
+            on_write=self._write_code_block,
+        )
+        self.app.push_screen(dialog)
+
+    async def _copy_code_block(self, block: CodeBlock):
+        """复制单个代码块到剪贴板."""
+        try:
+            fallback = await copy_to_clipboard(block.code)
+            if fallback:
+                self._add_system_message(f"[bold yellow]代码块已导出到文件：{fallback}[/bold yellow]")
+            else:
+                self._add_system_message("[bold green]代码块已复制到剪贴板[/bold green]")
+        except Exception as e:
+            self._add_system_message(f"[bold red]复制失败: {e}[/bold red]")
+
+    async def _insert_code_block(self, block: CodeBlock):
+        """将代码块插入到输入框当前光标/选区位置."""
+        try:
+            input_widget = self.query_one("#chat_input", ChatInput)
+            start, end = input_widget.selection
+            input_widget.replace(block.code, start, end)
+            input_widget.focus()
+            self._add_system_message("[#888888]已插入代码块到输入框[/#888888]")
+        except Exception as e:
+            self._add_system_message(f"[bold red]插入失败: {e}[/bold red]")
+
+    async def _write_code_block(self, block: CodeBlock):
+        """将代码块写入推断出的目标文件（带 diff 确认）."""
+        file_path = detect_target_file_path(block, self._last_ai_content, self.project_path)
+        if not file_path:
+            self._add_system_message("[bold yellow]无法推断该代码块要写入的文件路径[/bold yellow]")
+            return
+
+        read_result = self.chat_engine.tool_executor.read_file(file_path)
+        file_exists = read_result.status == ToolResultStatus.SUCCESS
+        old_content = read_result.output if file_exists else ""
+        new_content = block.code
+
+        if file_exists and old_content == new_content:
+            self._add_system_message(
+                f"[#888888]代码块与 {file_path} 内容一致，无需写入。[/#888888]"
+            )
+            return
+
+        diff = generate_unified_diff(old_content, new_content, file_path)
+        self._show_diff_preview(diff, file_path)
+
+        confirmed = await self._confirm_action(
+            title=f"确认应用代码块到: {file_path}",
+            content=diff,
+            content_type="diff",
+            confirm_label="确认写入",
+        )
+        if confirmed:
+            write_result = self.chat_engine.tool_executor.write_file(file_path, new_content)
+            if write_result.status == ToolResultStatus.SUCCESS:
+                action = "覆盖" if file_exists else "创建"
+                self._add_system_message(f"[bold green]已{action}文件: {file_path}[/bold green]")
+            else:
+                self._add_system_message(
+                    f"[bold red]写入 {file_path} 失败: {write_result.output}[/bold red]"
+                )
+        else:
+            self._add_system_message(f"[bold yellow]已取消写入 {file_path}[/bold yellow]")
+
+    def _render_code(self, log: RichLog, code: str, lang: Optional[str] = None, block: Optional[CodeBlock] = None):
+        log.write("")
+        idx = 0
+        if block and block in self._code_blocks:
+            idx = self._code_blocks.index(block) + 1
+
+        if idx:
+            log.write(f"[#888888]--- {lang or 'code'} (#{idx}) · F7 /codeblocks[/]")
+        else:
+            log.write(f"[bold #888888]--- {lang or 'code'}[/bold #888888]")
+
         if lang:
             try:
                 syntax = Syntax(code, lang, theme="monokai", line_numbers=False, word_wrap=True)
                 log.write(syntax)
             except Exception:
-                # 语言无法识别时回退到普通文本
-                log.write(f"[bold #888888]--- {lang}[/bold #888888]")
                 for line in code.split("\n"):
                     log.write(f"[#e0e0e0]{line}[/#e0e0e0]")
         else:
-            log.write(f"[bold #888888]--- code[/bold #888888]")
             for line in code.split("\n"):
                 log.write(f"[#e0e0e0]{line}[/#e0e0e0]")
         log.write("")
@@ -532,6 +758,39 @@ class MainScreen(Screen):
             log_debug(f"Confirmation dialog error: {type(e).__name__}: {e}")
             return False
 
+    async def _review_plan(self, plan: str) -> Optional[str]:
+        """显示 Agent 计划审核对话框，返回用户确认（可能已编辑）的计划或 None."""
+        import threading
+
+        log_debug("Showing plan review dialog")
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[Optional[str]] = loop.create_future()
+
+        def on_dismiss(result: Optional[str]) -> None:
+            if not future.done():
+                future.set_result(result)
+
+        dialog = PlanReviewDialog(plan=plan, on_dismiss=on_dismiss)
+
+        def show_dialog() -> None:
+            try:
+                self.app.push_screen(dialog)
+            except Exception as e:
+                log_debug(f"push_screen error: {type(e).__name__}: {e}")
+                if not future.done():
+                    future.set_result(None)
+
+        try:
+            if threading.current_thread().ident == getattr(self.app, "_thread_id", None):
+                show_dialog()
+            else:
+                self.app.call_from_thread(show_dialog, wait=False)
+            return await future
+        except Exception as e:
+            log_debug(f"Plan review dialog error: {type(e).__name__}: {e}")
+            return None
+
     def _build_callbacks(self) -> ChatCallbacks:
         """构建聊天引擎回调."""
         return ChatCallbacks(
@@ -540,9 +799,7 @@ class MainScreen(Screen):
             add_tool_result=self._add_tool_result,
             stream_chunk=self._on_stream_chunk,
             confirm_action=self._confirm_action,
-            show_diff_preview=lambda diff: self._render_diff(
-                self.query_one("#messages_log", RichLog), diff
-            ),
+            show_diff_preview=self._show_diff_preview,
         )
 
     async def action_copy_last_message(self):
@@ -599,7 +856,22 @@ class MainScreen(Screen):
         except Exception as e:
             self._add_system_message(f"[bold red]复制失败: {e}[/bold red]")
 
+    def _hide_tool_result_panel(self):
+        """隐藏底部 Tool Result 面板并恢复输入框焦点."""
+        try:
+            bottom_panel = self.query_one("#bottom_panel", Vertical)
+            bottom_panel.display = False
+            tool_log = self.query_one("#tool_result_log", RichLog)
+            tool_log.clear()
+            input_widget = self.query_one("#chat_input", ChatInput)
+            input_widget.focus()
+        except Exception:
+            pass
+
     def _on_chat_send(self, content: str):
+        # 新用户消息开始时隐藏之前的工具结果面板，避免一直占用屏幕
+        self._hide_tool_result_panel()
+
         async def _wrapped():
             self.is_processing = True
             try:
@@ -616,6 +888,7 @@ class MainScreen(Screen):
                     await self.chat_engine.process_message(content, self._build_callbacks())
             finally:
                 self.is_processing = False
+                self._update_sidebar()
 
         self.run_worker(_wrapped())
 
@@ -635,13 +908,20 @@ class MainScreen(Screen):
             "export_history": self._export_history,
             "import_history": self._import_history,
             "show_history": self._on_history_command,
+            "search_history": self._search_history,
+            "show_search_dialog": self.action_show_search,
+            "show_code_blocks": self.action_show_code_blocks,
+            "retry_last_response": self._retry_last_response,
+            "compare_models": self._compare_models,
             "undo": self._undo_last_change,
             "git_commit": self._git_commit,
             "show_status": self._show_status,
             "run_command": self._run_command,
+            "run_git_command": self._run_git_command,
             "agent_execute": self._run_agent_cluster,
             "show_about": self._show_about,
             "exit": self._exit,
+            "add_system_message": self._on_add_system_message,
         }
         handler = handlers.get(action)
         if handler:
@@ -696,6 +976,172 @@ class MainScreen(Screen):
             "/import <path> [--merge] to import."
         )
         self._add_system_message("\n".join(lines))
+
+    def _search_history(self, data: Dict):
+        """处理 /search 命令：搜索聊天记录."""
+        keyword = data.get("keyword", "").strip()
+        if not keyword:
+            self._add_system_message("[bold yellow]用法: /search <keyword>[/bold yellow]")
+            return
+
+        results = self.chat_engine.history.search(keyword)
+        if not results:
+            self._add_system_message(f"[italic #888888]未找到包含 \"{keyword}\" 的记录[/italic #888888]")
+            return
+
+        lines = [f'搜索结果: "{keyword}" ({len(results)} 条)', "-" * 40]
+        for msg in results:
+            ts = msg.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+            preview = msg.content[:80].replace("\n", " ")
+            if len(msg.content) > 80:
+                preview += "..."
+            role_label = {"user": "You", "assistant": self._get_ai_label(), "tool": "Tool"}.get(msg.role, msg.role)
+            lines.append(f"  [{msg.id}] [{ts}] {role_label}: {preview}")
+        lines.append("-" * 40)
+        lines.append("使用 /copy <id> 复制指定消息")
+        self._add_system_message("\n".join(lines))
+
+    def _refresh_messages_log(self):
+        """清空并重新渲染消息区."""
+        log = self.query_one("#messages_log", RichLog)
+        log.clear()
+        for msg in self.chat_engine.history.messages:
+            if msg.role == "user":
+                self._render_user_message(msg.content, msg.id)
+            elif msg.role == "assistant":
+                self._render_ai_message(msg.content, msg.thinking, msg.id)
+            elif msg.role == "tool":
+                self._add_tool_result(msg.tool_name or "tool", msg.content)
+
+    async def _retry_last_response(self):
+        """处理 /retry 命令：重新生成最后一条 AI 回复."""
+        if self.is_processing:
+            self._add_system_message("[bold yellow]AI 正在处理中，请稍后再试[/bold yellow]")
+            return
+
+        last_user = self.chat_engine.history.get_last_message("user")
+        if not last_user:
+            self._add_system_message("[bold yellow]没有可重试的用户消息[/bold yellow]")
+            return
+
+        last_ai = self.chat_engine.history.get_last_message("assistant")
+        if not last_ai:
+            self._add_system_message("[bold yellow]没有可重试的 AI 回复[/bold yellow]")
+            return
+
+        self.is_processing = True
+        self._update_runtime_status({"agent": "-", "model": self._get_ai_label(), "state": "running"})
+
+        # 移除最后一条 AI 回复并刷新界面
+        self.chat_engine.history.pop_last("assistant")
+        self._refresh_messages_log()
+        self._add_system_message(f"[italic #888888]正在重新生成对上文 \"{last_user.content[:30]}{'...' if len(last_user.content) > 30 else ''}\" 的回复...[/italic #888888]")
+
+        def make_callbacks() -> ChatCallbacks:
+            return ChatCallbacks(
+                add_system_message=self._add_system_message,
+                add_ai_message=self._add_ai_message,
+                add_tool_result=self._add_tool_result,
+                stream_chunk=self._on_stream_chunk,
+                confirm_action=self._confirm_action,
+                show_diff_preview=self._show_diff_preview,
+            )
+
+        try:
+            await self.chat_engine.retry_last_response(make_callbacks())
+        finally:
+            self.is_processing = False
+            self._update_runtime_status({"agent": "-", "model": "-", "state": "idle"})
+            streaming_output = self.query_one("#streaming_output", Static)
+            streaming_output.display = False
+            streaming_output.update("")
+
+    def action_retry_last_response(self):
+        """快捷键 Ctrl+R：重新生成最后一条 AI 回复."""
+        self.run_worker(self._retry_last_response())
+
+    async def _compare_models(self, data: Dict):
+        """处理 /compare 命令：并发请求多个模型并并排显示结果."""
+        model_ids = data.get("model_ids", [])
+        prompt = data.get("prompt", "").strip()
+        if not model_ids or not prompt:
+            self._add_system_message("[bold yellow]用法: /compare <model_ids> <prompt>[/bold yellow]")
+            return
+
+        available = {
+            m.id: m for m in self.config.models
+            if m.enabled and m.api_key
+        }
+        models = []
+        missing = []
+        for mid in model_ids:
+            if mid in available:
+                models.append(available[mid])
+            else:
+                missing.append(mid)
+
+        if missing:
+            self._add_system_message(
+                f"[bold yellow]未找到或不可用模型: {', '.join(missing)}[/bold yellow]"
+            )
+        if not models:
+            return
+
+        if self.is_processing:
+            self._add_system_message("[bold yellow]AI 正在处理中，请稍后再试[/bold yellow]")
+            return
+
+        self.is_processing = True
+        self._add_system_message(
+            f"[italic #888888]正在并发请求 {len(models)} 个模型进行对比...[/italic #888888]"
+        )
+
+        system_prompt = build_system_prompt(self.project_path)
+
+        async def ask_model(model: ModelConfig) -> Dict:
+            client = LLMClient(model, think_mode=self.config.ai.think_mode)
+            try:
+                messages = [{"role": "user", "content": prompt}]
+                response = ""
+                async for chunk in client.chat(
+                    messages,
+                    system_prompt=system_prompt,
+                    stream=False,
+                ):
+                    response += chunk
+
+                usage = client.last_usage
+                if usage:
+                    self.chat_engine.token_tracker.add_usage(model, usage)
+
+                return {"model": model, "response": response, "error": None}
+            except Exception as e:
+                return {"model": model, "response": "", "error": str(e)}
+            finally:
+                await client.close()
+
+        try:
+            results = await asyncio.gather(*(ask_model(m) for m in models))
+        finally:
+            self.is_processing = False
+            self._update_sidebar()
+
+        table = Table(title="模型对比结果", expand=True, show_header=True)
+        table.add_column("模型", width=20, no_wrap=True)
+        table.add_column("回答", ratio=1)
+
+        for r in results:
+            name = r["model"].name
+            if r["error"]:
+                content = f"[错误] {r['error']}"
+            else:
+                content = r["response"].strip()
+            table.add_row(name, Text(content))
+
+        log = self.query_one("#messages_log", RichLog)
+        log.write("")
+        log.write(table)
+        log.write("")
 
     async def _export_history(self, data: Optional[Dict] = None):
         """处理 /export 命令：导出聊天记录到文件."""
@@ -963,18 +1409,73 @@ class MainScreen(Screen):
     def _undo_last_change(self):
         self._add_system_message("Undo not yet implemented")
 
-    def _git_commit(self, data: Dict):
-        message = data.get("message", "Hakimi update")
-        if git_utils.is_git_repo(str(self.project_path)):
-            files = [f for _, f in git_utils.get_git_status(str(self.project_path))]
-            if files:
-                git_utils.git_add(str(self.project_path), files)
-                git_utils.git_commit(str(self.project_path), message)
-                self._add_system_message(f"[bold green]Committed: {message}[/bold green]")
-            else:
-                self._add_system_message("No changes to commit")
+    async def _git_commit(self, data: Dict):
+        message = data.get("message", "").strip()
+
+        if not git_utils.is_git_repo(str(self.project_path)):
+            self._add_system_message("[bold yellow]当前项目不是 Git 仓库[/bold yellow]")
+            self._update_sidebar()
+            return
+
+        files = [f for _, f in git_utils.get_git_status(str(self.project_path))]
+        if not files:
+            self._add_system_message("[italic #888888]没有可提交的更改[/italic #888888]")
+            self._update_sidebar()
+            return
+
+        # 未提供提交信息时，让 AI 根据 diff 生成
+        if not message:
+            diff = git_utils.get_git_diff(str(self.project_path))
+            if not diff:
+                self._add_system_message("[bold yellow]没有可提交的 diff[/bold yellow]")
+                return
+
+            active_model = get_active_model(self.config)
+            if not active_model or not active_model.api_key:
+                self._add_system_message(
+                    "[bold yellow]未配置模型或 API key，无法自动生成提交信息。"
+                    "请手动指定：/commit <message>[/bold yellow]"
+                )
+                return
+
+            self.is_processing = True
+            self._update_runtime_status({"agent": "-", "model": self._get_ai_label(), "state": "deciding"})
+            self._add_system_message("[italic #888888]AI 正在根据 diff 生成提交信息...[/italic #888888]")
+            try:
+                if not self.chat_engine.llm_client or self.chat_engine.llm_client.model.id != active_model.id:
+                    await self.chat_engine.close()
+                    self.chat_engine.llm_client = LLMClient(active_model, think_mode=self.config.ai.think_mode)
+
+                prompt = (
+                    "请根据以下 git diff 生成一条简洁的英文 conventional commit message。"
+                    "只返回消息本身，不要加任何解释、引号或 markdown 格式。\n\n"
+                    f"{diff[:4000]}"
+                )
+                messages = [{"role": "user", "content": prompt}]
+                generated = ""
+                async for chunk in self.chat_engine.llm_client.chat(messages, stream=False):
+                    generated += chunk
+                message = generated.strip().strip('"').strip("'")
+                if not message:
+                    message = "Hakimi update"
+                self._add_system_message(f"[bold #58a6ff]生成提交信息:[/bold #58a6ff] {message}")
+
+                # 累计本次生成消耗的 token
+                usage = self.chat_engine.llm_client.last_usage
+                if usage:
+                    self.chat_engine.token_tracker.add_usage(active_model, usage)
+            except Exception as e:
+                self._add_system_message(f"[bold red]生成提交信息失败: {e}[/bold red]")
+                return
+            finally:
+                self.is_processing = False
+                self._update_runtime_status({"agent": "-", "model": "-", "state": "idle"})
+
+        git_utils.git_add(str(self.project_path), files)
+        if git_utils.git_commit(str(self.project_path), message):
+            self._add_system_message(f"[bold green]已提交: {message}[/bold green]")
         else:
-            self._add_system_message("Not a git repository")
+            self._add_system_message(f"[bold red]提交失败: {message}[/bold red]")
         self._update_sidebar()
 
     def _show_status(self):
@@ -1067,6 +1568,57 @@ class MainScreen(Screen):
         else:
             self._add_tool_result(f"$ {command} (exit {result.exit_code})", result.output)
 
+    async def _run_git_command(self, data: Dict):
+        args_str = data.get("args", "").strip()
+        if not args_str:
+            self._add_system_message("[bold yellow]用法: /git <git 命令参数>[/bold yellow]")
+            return
+
+        if not git_utils.is_git_repo(str(self.project_path)):
+            self._add_system_message("[bold yellow]当前项目不是 Git 仓库[/bold yellow]")
+            return
+
+        # 简单分词：支持引号内的空格
+        try:
+            args = shlex.split(args_str)
+        except ValueError as exc:
+            self._add_system_message(f"[bold red]参数解析失败: {exc}[/bold red]")
+            return
+
+        # 过滤危险子命令（可选）
+        dangerous = {"rm", "clean", "reset", "rebase", "filter-branch"}
+        if args and args[0].lower() in dangerous:
+            confirmed = await self._confirm_action(
+                title="确认执行 Git 危险命令",
+                content=f"git {' '.join(args)}",
+                content_type="text",
+                confirm_label="确认执行",
+            )
+            if not confirmed:
+                self._add_system_message("[bold yellow]已取消 git 命令[/bold yellow]")
+                return
+        elif self.config.ai.confirm_tool_execution and self.config.ai.confirm_command_execution:
+            confirmed = await self._confirm_action(
+                title="确认执行 Git 命令",
+                content=f"git {' '.join(args)}",
+                content_type="text",
+                confirm_label="确认执行",
+            )
+            if not confirmed:
+                self._add_system_message("[bold yellow]已取消 git 命令[/bold yellow]")
+                return
+
+        exit_code, stdout, stderr = git_utils.run_git_command(str(self.project_path), args)
+        output = stdout
+        if stderr:
+            output = (output + "\n" + stderr).strip()
+        if not output:
+            output = "(无输出)"
+        if exit_code == 0:
+            self._add_tool_result(f"$ git {' '.join(args)}", output)
+        else:
+            self._add_tool_result(f"$ git {' '.join(args)} (exit {exit_code})", output)
+
     async def _run_agent_cluster(self, data: Dict):
         request = data.get("request", "")
         active_model = get_active_model(self.config)
@@ -1083,6 +1635,7 @@ class MainScreen(Screen):
             progress_callback=lambda msg: self._add_system_message(msg),
             status_callback=lambda status: self._update_runtime_status(status),
             confirm_callback=self._confirm_action,
+            plan_review_callback=self._review_plan,
         )
         result = await orchestrator.process(request)
         self._add_system_message(result)
@@ -1145,3 +1698,18 @@ class MainScreen(Screen):
 
     def action_quit(self):
         self._exit()
+
+    def action_confirm_quit(self):
+        """弹出确认框后再退出应用."""
+        dialog = ConfirmationDialog(
+            title="确认退出",
+            content="确定要退出 Hakimi Codex 吗？",
+            confirm_label="退出",
+            cancel_label="取消",
+            on_dismiss=self._on_quit_confirmed,
+        )
+        self.app.push_screen(dialog)
+
+    def _on_quit_confirmed(self, confirmed: bool):
+        if confirmed:
+            self._exit()

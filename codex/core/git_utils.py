@@ -127,3 +127,24 @@ def get_git_log(path: str, n: int = 5) -> List[Tuple[str, str, str]]:
         return commits
     except (subprocess.CalledProcessError, FileNotFoundError):
         return []
+
+
+def run_git_command(path: str, args: List[str]) -> Tuple[int, str, str]:
+    """执行任意 Git 命令并返回 (exit_code, stdout, stderr).
+
+    使用参数列表传递，避免 shell 注入。
+    """
+    try:
+        result = subprocess.run(
+            ["git"] + args,
+            cwd=path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        return result.returncode, result.stdout, result.stderr
+    except FileNotFoundError:
+        return 127, "", "git 命令未找到，请确认已安装 Git 并加入 PATH"
+    except Exception as exc:
+        return 1, "", f"执行 git 命令时出错: {exc}"

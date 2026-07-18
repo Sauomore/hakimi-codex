@@ -18,6 +18,6 @@ def generate_unified_diff(old_content: str, new_content: str, file_path: str) ->
         new_lines,
         fromfile=f"a/{file_path}",
         tofile=f"b/{file_path}",
-        lineterm=''
+        lineterm='\n'
     )
     return ''.join(diff)

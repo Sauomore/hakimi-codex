@@ -119,6 +119,16 @@ class ToolExecutor:
         # 常见参数别名兼容
         params = dict(parameters)
 
+        # 模型有时会生成嵌套的 {"parameters": {...}}，尝试展平
+        if "parameters" in params and isinstance(params["parameters"], dict):
+            # 如果当前工具没有名为 parameters 的合法参数，则展开内部字段
+            from .schemas import get_tools_description
+            schema = next((t for t in get_tools_description() if t["name"] == tool_name), None)
+            schema_props = schema.get("parameters", {}).get("properties", {}) if schema else {}
+            if "parameters" not in schema_props:
+                inner = params.pop("parameters")
+                params.update(inner)
+
         # list_directory: arguments/path -> dir_path
         if tool_name == "list_directory":
             if "arguments" in params:
@@ -130,9 +140,12 @@ class ToolExecutor:
         if tool_name == "search_files" and "search_path" in params and "path" not in params:
             params["path"] = params.pop("search_path")
 
-        # read_file: arguments -> file_path
-        if tool_name == "read_file" and "arguments" in params and "file_path" not in params:
-            params["file_path"] = params.pop("arguments")
+        # read_file: arguments/path/file -> file_path
+        if tool_name == "read_file" and "file_path" not in params:
+            for alias in ("arguments", "path", "file", "filename"):
+                if alias in params:
+                    params["file_path"] = params.pop(alias)
+                    break
 
         # execute_command: arguments -> command
         if tool_name == "execute_command" and "arguments" in params and "command" not in params:

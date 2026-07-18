@@ -6,7 +6,7 @@ def get_tools_description() -> list:
     return [
         {
             "name": "execute_command",
-            "description": "执行 shell 命令，获取命令输出。使用此工具来运行测试、构建项目、安装依赖等。",
+            "description": "执行 shell 命令，获取命令输出。使用此工具来运行测试、构建项目、安装依赖等。注意：不要用它打开或预览文件（如 start/open/xdg-open/code），如需创建文件请使用 write_file。",
             "parameters": {
                 "type": "object",
                 "properties": {

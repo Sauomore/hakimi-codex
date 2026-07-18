@@ -6,6 +6,7 @@ from textual.app import ComposeResult
 from textual.screen import ModalScreen
 from textual.containers import Container, Horizontal
 from textual.widgets import Static, Button, RichLog
+from rich.text import Text
 
 
 class ConfirmationDialog(ModalScreen[bool]):
@@ -111,17 +112,18 @@ class ConfirmationDialog(ModalScreen[bool]):
 
     def _render_diff(self, log: RichLog, diff: str):
         """渲染 diff 内容."""
-        log.write("[bold #e0e0e0]--- diff[/bold #e0e0e0]")
+        log.write(Text("--- diff", style="bold #e0e0e0"))
         for line in diff.split("\n"):
             if line.startswith("+"):
-                log.write(f"[bold #3fb950]{line}[/bold #3fb950]")
+                style = "bold #3fb950"
             elif line.startswith("-"):
-                log.write(f"[bold #f85149]{line}[/bold #f85149]")
+                style = "bold #f85149"
             elif line.startswith("@@"):
-                log.write(f"[#888888]{line}[/#888888]")
+                style = "#888888"
             else:
-                log.write(f"[#aaaaaa]{line}[/#aaaaaa]")
-        log.write("[bold #e0e0e0]---[/bold #e0e0e0]")
+                style = "#aaaaaa"
+            log.write(Text(line, style=style))
+        log.write(Text("---", style="bold #e0e0e0"))
 
     def _render_text(self, log: RichLog, text: str):
         """渲染纯文本内容（按行写入，支持长文本滚动）."""

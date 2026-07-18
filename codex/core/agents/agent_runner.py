@@ -18,6 +18,27 @@ from .specialist_prompts import build_specialist_prompt
 ConfirmCallback = Optional[Callable[..., Awaitable[bool]]]
 
 
+_PARAM_ALIASES = {
+    "read_file": {"file_path": ("arguments", "path", "file", "filename")},
+    "write_file": {"file_path": ("arguments", "path", "file", "filename")},
+    "execute_command": {"command": ("arguments", "cmd")},
+    "execute_code": {"code": ("arguments", "script")},
+    "search_files": {"pattern": ("arguments", "regex", "query")},
+}
+
+
+def _normalize_parameters(tool_name: str, parameters: Dict[str, Any]) -> None:
+    """将常见参数别名归一化为标准名称（原地修改）."""
+    aliases = _PARAM_ALIASES.get(tool_name, {})
+    for canonical, alt_names in aliases.items():
+        if canonical in parameters:
+            continue
+        for alt in alt_names:
+            if alt in parameters:
+                parameters[canonical] = parameters.pop(alt)
+                break
+
+
 class AgentRunner:
     """运行一个 Specialist Agent 完成指定任务."""
 
@@ -84,6 +105,9 @@ class AgentRunner:
                     parameters = call.get("parameters") or call.get("args")
                     if not parameters:
                         parameters = {k: v for k, v in call.items() if k not in ("tool", "command")}
+
+                    # 参数别名归一化
+                    _normalize_parameters(tool_name, parameters)
 
                     # 验证必需参数是否存在
                     required_params = {

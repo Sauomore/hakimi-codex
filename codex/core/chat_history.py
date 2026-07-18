@@ -141,6 +141,26 @@ class ChatHistory:
                 return msg
         return None
 
+    def pop_last(self, role: Optional[str] = None) -> Optional[ChatMessage]:
+        """移除并返回最后一条消息，可指定角色."""
+        for i in range(len(self.messages) - 1, -1, -1):
+            if role is None or self.messages[i].role == role:
+                msg = self.messages.pop(i)
+                self.save()
+                return msg
+        return None
+
+    def search(self, keyword: str) -> List[ChatMessage]:
+        """搜索包含关键字的消息（忽略大小写）."""
+        keyword_lower = keyword.lower()
+        results = []
+        for msg in self.messages:
+            if keyword_lower in msg.content.lower():
+                results.append(msg)
+            elif msg.thinking and keyword_lower in msg.thinking.lower():
+                results.append(msg)
+        return results
+
     def find_message(self, message_id: str) -> Optional[ChatMessage]:
         """根据 ID 查找消息."""
         for msg in self.messages:
